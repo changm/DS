@@ -20,7 +20,17 @@ type LockServer struct {
 
   // for each lock name, is it locked?
   locks map[string]bool
+  locks_time map[string]time.Time
 }
+
+func isDuplicateMessage(lockServer *LockServer, args *LockArgs) bool {
+  return lockServer.locks_time[args.Lockname] == args.Stamp;
+}
+
+func isDupUnlock(lockServer *LockServer, args *UnlockArgs) bool {
+  return lockServer.locks_time[args.Lockname] == args.Stamp;
+}
+
 
 //
 // server Lock RPC handler.
@@ -34,25 +44,39 @@ func (ls *LockServer) Lock(args *LockArgs, reply *LockReply) error {
 
   locked, _ := ls.locks[args.Lockname]
 
+/*
   if !ls.am_primary {
-    fmt.Printf("Backup Is locking - %v - %v\n", args.Lockname, locked);
+    fmt.Printf("Backup Is locking - %v. Already locked %v\n", args.Lockname, locked);
+  } else {
+    fmt.Printf("Primary is locking %v. Already locked  %v\n", args.Lockname, locked);
   }
+  */
 
   if locked {
-    reply.OK = false
+    if (isDuplicateMessage(ls, args)) {
+      //fmt.Printf("Is duplicate\n");
+      reply.OK = true;
+      } else {
+      reply.OK = false
+      }
   } else {
     reply.OK = true
     ls.locks[args.Lockname] = true
+    ls.locks_time[args.Lockname] = args.Stamp
   }
 
   if ls.am_primary {
-    var backupReply LockReply
-    call (ls.backup, "LockServer.Lock", args, &backupReply)
-    // TODO - Check backup is alive
-  } else {
-    fmt.Printf("Backup returning: %v\n", reply.OK);
+    //var backupReply LockReply
+    //fmt.Printf("Primary updating backup\n");
+    call (ls.backup, "LockServer.Lock", args, reply)
+    //fmt.Printf("Primary returning %v\n", reply.OK);
   }
 
+  return nil
+}
+
+func (ls *LockServer) IsLocked(args *LockArgs, reply *LockReply) error {
+  reply.OK = ls.locks[args.Lockname];
   return nil
 }
 
@@ -61,13 +85,15 @@ func (ls *LockServer) Lock(args *LockArgs, reply *LockReply) error {
 //
 func (ls *LockServer) Unlock(args *UnlockArgs, reply *UnlockReply) error {
   var locked, _ = ls.locks[args.Lockname];
-  fmt.Printf("CALLIMG UNLOCK\n");
+  //fmt.Printf("CALLIMG UNLOCK\n");
 
+/*
   if !ls.am_primary {
     fmt.Printf("Backup Is unlocking, current lock %v - %v\n", args.Lockname, locked);
   } else {
     fmt.Printf("Unlocking now\n");
   }
+  */
 
   if locked {
     ls.mu.Lock();
@@ -75,8 +101,13 @@ func (ls *LockServer) Unlock(args *UnlockArgs, reply *UnlockReply) error {
 
     reply.OK = true;
     ls.locks[args.Lockname] = false
+    ls.locks_time[args.Lockname] = args.Stamp
   } else {
-    reply.OK = false;
+    if (isDupUnlock(ls, args)) {
+      reply.OK = true;
+    } else {
+      reply.OK = false;
+    }
   }
 
   if ls.am_primary {
@@ -118,11 +149,17 @@ func (dc DeafConn) Read(p []byte) (n int, err error) {
   return dc.c.Read(p)
 }
 
-func StartServer(primary string, backup string, am_primary bool) *LockServer {
+func initLockServer(primary string, backup string, am_primary bool) *LockServer {
   ls := new(LockServer)
   ls.backup = backup
   ls.am_primary = am_primary
   ls.locks = map[string]bool{}
+  ls.locks_time = map[string]time.Time{}
+  return ls;
+}
+
+func StartServer(primary string, backup string, am_primary bool) *LockServer {
+  ls := initLockServer(primary, backup, am_primary);
 
   // Your initialization code here.
 

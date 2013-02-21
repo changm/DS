@@ -2,10 +2,10 @@ package lockservice
 
 import "testing"
 import "runtime"
-//import "math/rand"
+import "math/rand"
 import "os"
 import "strconv"
-//import "time"
+import "time"
 import "fmt"
 
 func tl(t *testing.T, ck *Clerk, lockname string, expected bool) {
@@ -16,7 +16,6 @@ func tl(t *testing.T, ck *Clerk, lockname string, expected bool) {
 }
 
 func tu(t *testing.T, ck *Clerk, lockname string, expected bool) {
-  fmt.Printf("Running lockname: %v on clerk\n", lockname, ck);
   x := ck.Unlock(lockname)
   if x != expected {
     t.Fatalf("Unlock(%v) returned %v; expected %v", lockname, x, expected)
@@ -37,7 +36,6 @@ func port(suffix string) string {
   return s
 }
 
-/*
 func TestBasic(t *testing.T) {
   fmt.Printf("Test: Basic lock/unlock ...\n")
 
@@ -68,7 +66,6 @@ func TestBasic(t *testing.T) {
 
   fmt.Printf("  ... Passed\n")
 }
-*/
 
 func TestPrimaryFail1(t *testing.T) {
   fmt.Printf("Test: Primary failure ...\n")
@@ -94,32 +91,22 @@ func TestPrimaryFail1(t *testing.T) {
   tl(t, ck, "d", true)
 
   // a, c, and d are locked
-  fmt.Printf("Killing primary\n");
   p.kill()
 
-  fmt.Printf("Getting locks in backup\n");
   tl(t, ck, "a", false)
-
-  fmt.Printf("Backup got lock A in test, running unlock \n");
   tu(t, ck, "a", true)
-  fmt.Printf("Backup unlock A a\n");
 
   tu(t, ck, "b", false)
-  fmt.Printf("Backup unlock b\n");
 
   tl(t, ck, "b", true)
-   fmt.Printf("Backup LOCK b\n");
-
 
   tu(t, ck, "c", true)
-
   tu(t, ck, "d", true)
 
   b.kill()
   fmt.Printf("  ... Passed\n")
 }
 
-/*
 func TestPrimaryFail2(t *testing.T) {
   fmt.Printf("Test: Primary failure just before reply #1 ...\n")
   runtime.GOMAXPROCS(4)
@@ -138,6 +125,7 @@ func TestPrimaryFail2(t *testing.T) {
   p.dying = true
 
   tl(t, ck2, "c", true)
+
   tl(t, ck1, "c", false)
   tu(t, ck2, "c", true)
   tl(t, ck1, "c", true)
@@ -145,6 +133,7 @@ func TestPrimaryFail2(t *testing.T) {
   b.kill()
   fmt.Printf("  ... Passed\n")
 }
+
 
 func TestPrimaryFail3(t *testing.T) {
   fmt.Printf("Test: Primary failure just before reply #2 ...\n")
@@ -490,4 +479,3 @@ func TestConcurrentCounts(t *testing.T) {
   b.kill()
   fmt.Printf("  ... Passed\n")
 }
-*/
