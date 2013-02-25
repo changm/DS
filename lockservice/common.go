@@ -1,7 +1,7 @@
 package lockservice
 
 import "net/rpc"
-import "time"
+//import "fmt"
 
 //
 // RPC definitions for a simple lock service.
@@ -17,7 +17,7 @@ type LockArgs struct {
   // Go's net/rpc requires that these field
   // names start with upper case letters!
   Lockname string  // lock name
-  Stamp time.Time
+  Clock int
 }
 
 type LockReply struct {
@@ -30,7 +30,7 @@ type LockReply struct {
 //
 type UnlockArgs struct {
   Lockname string
-  Stamp time.Time
+  Clock int
 }
 
 type UnlockReply struct {
