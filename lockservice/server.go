@@ -35,7 +35,6 @@ func (ls *LockServer) updateLock(args* LockArgs) {
     lockInfo = new(LockInfo);
   }
 
-  fmt.Printf("Updating lock clock %v\n", args.Clock)
   lockInfo.lastLock = args.Clock
   ls.lockInfo[args.Lockname] = lockInfo
 }
@@ -50,6 +49,30 @@ func (ls *LockServer) updateUnlock(args* UnlockArgs) {
   ls.lockInfo[args.Lockname] = lockInfo
 }
 
+func (ls* LockServer) isLateLock(args* LockArgs) bool {
+  var lockInfo, exists = ls.lockInfo[args.Lockname]
+  if !exists {
+    return false
+  }
+
+  clock := args.Clock
+  return (clock < lockInfo.lastUnlock) || (clock < lockInfo.lastLock)
+}
+
+func (ls* LockServer) isDupLock(args* LockArgs) bool {
+  var lockInfo, exists = ls.lockInfo[args.Lockname]
+  if !exists {
+    return false
+  }
+
+  clock := args.Clock
+  return clock == lockInfo.lastLock
+}
+
+func (ls* LockServer) isDupUnlock(args* UnlockArgs) bool {
+  return args.Clock == ls.lockInfo[args.Lockname].lastUnlock
+}
+
 func (ls* LockServer) isLateMessage(args* UnlockArgs) bool {
   var lockInfo, exists = ls.lockInfo[args.Lockname]
   if !exists {
@@ -57,6 +80,8 @@ func (ls* LockServer) isLateMessage(args* UnlockArgs) bool {
   }
 
   clock := args.Clock
+  //fmt.Printf("LATE UNLOCK: Unlock clock: %v - last unlock %v, last lock %v\n", 
+    //clock, lockInfo.lastUnlock, lockInfo.lastLock)
   return (clock < lockInfo.lastUnlock) || (clock < lockInfo.lastLock)
 }
 
@@ -67,6 +92,7 @@ func (ls *LockServer) wasUnlocked(args* UnlockArgs) bool {
   }
 
   clock := args.Clock
+  //fmt.Printf("WAS UNLOCKED: Unlock clock: %v - last unlock %v\n", clock, lockInfo.lastUnlock)
   return (clock >= lockInfo.lastUnlock) && (clock <= lockInfo.lastLock)
 }
 
@@ -76,18 +102,27 @@ func (ls *LockServer) wasUnlocked(args* UnlockArgs) bool {
 // you will have to modify this function
 //
 func (ls *LockServer) Lock(args *LockArgs, reply *LockReply) error {
-  fmt.Printf("Locking now wtf clock %v\n", args.Clock);
   ls.mu.Lock()
   // Actually only have 1 global lock
-  //defer ls.mu.Unlock()
+  defer ls.mu.Unlock()
+
+  if ls.isDupLock(args) {
+    reply.OK = true
+    return nil
+  } else if ls.isLateLock(args) {
+    fmt.Printf("Late lock\n")
+    // Add checks to see if was locked
+  }
 
   locked, _ := ls.locks[args.Lockname]
 
+/*
   if !ls.am_primary {
     fmt.Printf("Backup Is locking - %v. Already locked %v\n", args.Lockname, locked);
   } else {
     fmt.Printf("Primary is locking %v. Already locked  %v\n", args.Lockname, locked);
   }
+  */
 
   if locked {
     reply.OK = false
@@ -98,13 +133,11 @@ func (ls *LockServer) Lock(args *LockArgs, reply *LockReply) error {
   }
 
   if ls.am_primary {
-    //var backupReply LockReply
     //fmt.Printf("Primary updating backup\n");
     call (ls.backup, "LockServer.Lock", args, reply)
     //fmt.Printf("Primary returning %v\n", reply.OK);
   }
 
-  defer ls.mu.Unlock()
   return nil
 }
 
@@ -113,9 +146,12 @@ func (ls *LockServer) Lock(args *LockArgs, reply *LockReply) error {
 //
 func (ls *LockServer) Unlock(args *UnlockArgs, reply *UnlockReply) error {
   var locked, _ = ls.locks[args.Lockname];
-  fmt.Printf("SERVER: Unlocking now wtf clock %v\n", args.Clock);
+  //fmt.Printf("SERVER: Unlocking now wtf clock %v\n", args.Clock);
 
-  if ls.isLateMessage(args) {
+  if ls.isDupUnlock(args) {
+    reply.OK = true
+    return nil
+  } else if ls.isLateMessage(args) {
     if ls.wasUnlocked(args) {
       reply.OK = false
     } else {
@@ -125,6 +161,7 @@ func (ls *LockServer) Unlock(args *UnlockArgs, reply *UnlockReply) error {
     return nil;
   }
 
+/*
   if !ls.am_primary {
     fmt.Printf("Backup Is unlocking, current lock %v - %v at %v\n",
       args.Lockname, locked, args.Clock);
@@ -132,6 +169,7 @@ func (ls *LockServer) Unlock(args *UnlockArgs, reply *UnlockReply) error {
     fmt.Printf("Primary Is unlocking, current lock %v - %v at %v\n",
       args.Lockname, locked, args.Clock);
   }
+  */
 
   if locked {
     ls.mu.Lock();
@@ -141,7 +179,7 @@ func (ls *LockServer) Unlock(args *UnlockArgs, reply *UnlockReply) error {
     ls.locks[args.Lockname] = false
     ls.updateUnlock(args)
   } else {
-    fmt.Printf("Not locked! Should be a false\n");
+    //fmt.Printf("Not locked! Should be a false\n");
     reply.OK = false;
   }
 
@@ -151,7 +189,7 @@ func (ls *LockServer) Unlock(args *UnlockArgs, reply *UnlockReply) error {
     // TODO check backup
   }
 
-  fmt.Printf("Returning from unlock %v\n", reply.OK);
+  //fmt.Printf("Returning from unlock %v\n", reply.OK);
   return nil
 }
 
