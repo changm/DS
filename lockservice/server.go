@@ -9,10 +9,14 @@ import "os"
 import "io"
 import "time"
 
+const NOINFO = 0
+const LOCKED = 1
+const UNLOCKED = 2
+
 type LockInfo struct {
   name string
-  lastLock int
-  lastUnlock int
+  timestamp [50000]int
+  last int
 }
 
 type LockServer struct {
@@ -35,7 +39,8 @@ func (ls *LockServer) updateLock(args* LockArgs) {
     lockInfo = new(LockInfo);
   }
 
-  lockInfo.lastLock = args.Clock
+  lockInfo.timestamp[args.Clock] = LOCKED
+  lockInfo.last = args.Clock
   ls.lockInfo[args.Lockname] = lockInfo
 }
 
@@ -45,55 +50,75 @@ func (ls *LockServer) updateUnlock(args* UnlockArgs) {
     lockInfo = new(LockInfo);
   }
 
-  lockInfo.lastUnlock = args.Clock
+  lockInfo.timestamp[args.Clock] = UNLOCKED
+  lockInfo.last = args.Clock
   ls.lockInfo[args.Lockname] = lockInfo
 }
 
-func (ls* LockServer) isLateLock(args* LockArgs) bool {
-  var lockInfo, exists = ls.lockInfo[args.Lockname]
-  if !exists {
-    return false
-  }
-
-  clock := args.Clock
-  return (clock < lockInfo.lastUnlock) || (clock < lockInfo.lastLock)
+func (info* LockInfo) newMessage(clock int) bool {
+  return clock > info.last;
 }
 
-func (ls* LockServer) isDupLock(args* LockArgs) bool {
-  var lockInfo, exists = ls.lockInfo[args.Lockname]
-  if !exists {
-    return false
+func (info* LockInfo) getPrevious(clock int) (int, int) {
+  current := info.timestamp[clock]
+  if (current != 0) {
+    return clock, current;
   }
 
-  clock := args.Clock
-  return clock == lockInfo.lastLock
-}
-
-func (ls* LockServer) isDupUnlock(args* UnlockArgs) bool {
-  return args.Clock == ls.lockInfo[args.Lockname].lastUnlock
-}
-
-func (ls* LockServer) isLateMessage(args* UnlockArgs) bool {
-  var lockInfo, exists = ls.lockInfo[args.Lockname]
-  if !exists {
-    return false;
+  for current = clock; current > 0; current-- {
+    lockStatus := info.timestamp[current];
+    if lockStatus != 0 {
+      //fmt.Printf("Returninng lock clock %v is %v\n", current, lockStatus)
+      return current, lockStatus;
+    }
   }
 
-  clock := args.Clock
-  //fmt.Printf("LATE UNLOCK: Unlock clock: %v - last unlock %v, last lock %v\n", 
-    //clock, lockInfo.lastUnlock, lockInfo.lastLock)
-  return (clock < lockInfo.lastUnlock) || (clock < lockInfo.lastLock)
+  return -1, NOINFO;
 }
 
-func (ls *LockServer) wasUnlocked(args* UnlockArgs) bool {
-  var lockInfo, exists = ls.lockInfo[args.Lockname]
+// returns whether or not the message is old
+// if it is old, returns the approprirate unlock response
+func (ls* LockServer) oldUnlocked(clock int, lockName string) (bool, bool) {
+  var lockInfo, exists = ls.lockInfo[lockName]
+  //fmt.Printf("Does clock %v exist %v\n", clock, exists)
+
   if !exists {
-    return false;
+    return false, false;
   }
 
-  clock := args.Clock
-  //fmt.Printf("WAS UNLOCKED: Unlock clock: %v - last unlock %v\n", clock, lockInfo.lastUnlock)
-  return (clock >= lockInfo.lastUnlock) && (clock <= lockInfo.lastLock)
+  var oldClock = !lockInfo.newMessage(clock)
+  var unlockStatus = false
+
+  prevClock, lockStatus := lockInfo.getPrevious(clock)
+  if (prevClock == clock) {
+    unlockStatus = lockStatus == UNLOCKED
+  } else if (prevClock < clock) {
+    unlockStatus = lockStatus != UNLOCKED
+  }
+
+  //fmt.Printf("SERVER: current clock %v, Old clock %v - value is %v\n", clock, prevClock, unlockStatus)
+  return oldClock, unlockStatus
+}
+
+func (ls* LockServer) oldLocked(clock int, lockName string) (bool, bool) {
+  var lockInfo, exists = ls.lockInfo[lockName]
+  //fmt.Printf("Does clock %v exist %v\n", clock, exists)
+  if !exists || lockInfo.newMessage(clock) {
+    return false, false;
+  }
+
+  var oldClock = !lockInfo.newMessage(clock)
+  var lockStatus = false
+  prevClock, prevLockStatus := lockInfo.getPrevious(clock)
+
+  if (prevClock == clock) {
+    lockStatus = prevLockStatus == LOCKED
+  } else if (prevClock < clock) {
+    lockStatus = prevLockStatus != LOCKED
+  }
+
+  //fmt.Printf("SERVER: OLD LOCK current clock %v, Old clock %v - value is %v\n", clock, prevClock, lockStatus)
+  return oldClock, lockStatus
 }
 
 //
@@ -106,13 +131,14 @@ func (ls *LockServer) Lock(args *LockArgs, reply *LockReply) error {
   // Actually only have 1 global lock
   defer ls.mu.Unlock()
 
-  if ls.isDupLock(args) {
-    reply.OK = true
+  prevClock, prevLock := ls.oldLocked(args.Clock, args.Lockname)
+
+  if prevClock {
+    reply.OK = prevLock;
+    //fmt.Printf("Lock returning early at clock %v because old lock reply %v\n",
+      //args.Clock, reply.OK);
     return nil
-  } else if ls.isLateLock(args) {
-    fmt.Printf("Late lock\n")
-    // Add checks to see if was locked
-  }
+   }
 
   locked, _ := ls.locks[args.Lockname]
 
@@ -133,11 +159,10 @@ func (ls *LockServer) Lock(args *LockArgs, reply *LockReply) error {
   }
 
   if ls.am_primary {
-    //fmt.Printf("Primary updating backup\n");
     call (ls.backup, "LockServer.Lock", args, reply)
-    //fmt.Printf("Primary returning %v\n", reply.OK);
   }
 
+  //fmt.Printf("Lock at clock %v returning %v\n", args.Clock, reply.OK)
   return nil
 }
 
@@ -146,35 +171,18 @@ func (ls *LockServer) Lock(args *LockArgs, reply *LockReply) error {
 //
 func (ls *LockServer) Unlock(args *UnlockArgs, reply *UnlockReply) error {
   var locked, _ = ls.locks[args.Lockname];
-  //fmt.Printf("SERVER: Unlocking now wtf clock %v\n", args.Clock);
+   ls.mu.Lock();
+   defer ls.mu.Unlock();
 
-  if ls.isDupUnlock(args) {
-    reply.OK = true
+   prevClock, prevLock := ls.oldUnlocked(args.Clock, args.Lockname)
+
+   if prevClock {
+    reply.OK = prevLock;
+    //fmt.Printf("Unlock early clock %v returning %v\n", args.Clock, reply.OK)
     return nil
-  } else if ls.isLateMessage(args) {
-    if ls.wasUnlocked(args) {
-      reply.OK = false
-    } else {
-      reply.OK = true
-    }
+   }
 
-    return nil;
-  }
-
-/*
-  if !ls.am_primary {
-    fmt.Printf("Backup Is unlocking, current lock %v - %v at %v\n",
-      args.Lockname, locked, args.Clock);
-  } else {
-    fmt.Printf("Primary Is unlocking, current lock %v - %v at %v\n",
-      args.Lockname, locked, args.Clock);
-  }
-  */
-
-  if locked {
-    ls.mu.Lock();
-    defer ls.mu.Unlock();
-
+   if locked {
     reply.OK = true;
     ls.locks[args.Lockname] = false
     ls.updateUnlock(args)
@@ -186,10 +194,9 @@ func (ls *LockServer) Unlock(args *UnlockArgs, reply *UnlockReply) error {
   if ls.am_primary {
     var backupReply LockReply
     call (ls.backup, "LockServer.Unlock", args, &backupReply);
-    // TODO check backup
   }
 
-  //fmt.Printf("Returning from unlock %v\n", reply.OK);
+  //fmt.Printf("Unlock clock %v returning %v\n", args.Clock, reply.OK)
   return nil
 }
 

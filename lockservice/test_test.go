@@ -5,7 +5,7 @@ import "runtime"
 //import "math/rand"
 import "os"
 import "strconv"
-import "time"
+//import "time"
 import "fmt"
 
 func tl(t *testing.T, ck *Clerk, lockname string, expected bool) {
@@ -67,6 +67,7 @@ func TestBasic(t *testing.T) {
   fmt.Printf("  ... Passed\n")
 }
 
+/*
 func TestPrimaryFail1(t *testing.T) {
   fmt.Printf("Test: Primary failure ...\n")
   runtime.GOMAXPROCS(4)
@@ -224,7 +225,7 @@ func TestPrimaryFail6(t *testing.T) {
   p.dying = true
 
   tu(t, ck2, "b", true)
-  //tl(t, ck1, "b", true)
+  tl(t, ck1, "b", true)
 
   b.kill()
   fmt.Printf("  ... Passed\n")
@@ -348,7 +349,6 @@ func TestBackupFail(t *testing.T) {
   fmt.Printf("  ... Passed\n")
 }
 
-/*
 func TestMany(t *testing.T) {
   fmt.Printf("Test: Multiple clients with primary failure ...\n")
   runtime.GOMAXPROCS(4)
@@ -406,6 +406,91 @@ func TestMany(t *testing.T) {
   b.kill()
   fmt.Printf("  ... Passed\n")
 }
+*/
+
+/*
+func TestConcurrentCounts(t *testing.T) {
+  fmt.Printf("Test: Multiple clients, single lock, primary failure ...\n")
+  runtime.GOMAXPROCS(4)
+
+  phost := port("p")
+  bhost := port("b")
+  p := StartServer(phost, bhost, true)  // primary
+  b := StartServer(phost, bhost, false) // backup
+
+  const nclients = 2
+  const nlocks = 1
+  done := false
+  var acks [nclients]bool
+  var locks [nclients][nlocks] int
+  var unlocks [nclients][nlocks] int
+
+  for xi := 0; xi < nclients; xi++ {
+    go func(i int){
+      ck := MakeClerk(phost, bhost)
+      rr := rand.New(rand.NewSource(int64(os.Getpid()+i)))
+      for done == false {
+        locknum := rr.Int() % nlocks
+        lockname := strconv.Itoa(locknum)
+        what := rr.Int() % 2
+
+        //fmt.Printf("Lock num %v, name %v, what %v\n", locknum, lockname, what)
+        if what == 0 {
+          if ck.Lock(lockname) {
+            //fmt.Printf("TEST: Locked %v - %v\n", i, locknum)
+            locks[i][locknum]++
+          }
+        } else {
+          if ck.Unlock(lockname) {
+            //fmt.Printf("TEST: Unlocked %v - %v\n", i, locknum)
+            unlocks[i][locknum]++
+          }
+        }
+      }
+      acks[i] = true
+    }(xi)
+  }
+
+  time.Sleep(1 * time.Second)
+  p.kill()
+  time.Sleep(1 * time.Second)
+  done = true
+  time.Sleep(time.Second)
+  for xi := 0; xi < nclients; xi++ {
+    if acks[xi] == false {
+      t.Fatal("one client didn't complete")
+    }
+  }
+  ck := MakeClerk(phost, bhost)
+  for locknum := 0; locknum < nlocks; locknum++ {
+    nl := 0
+    nu := 0
+    fmt.Printf("Unlcoking stuff\n");
+    for xi := 0; xi < nclients; xi++ {
+      nl += locks[xi][locknum]
+      fmt.Printf("NL is: %v - adding %v\n", nl, locks[xi][locknum])
+
+      nu += unlocks[xi][locknum]
+      fmt.Printf("NU is %v - adding %v\n", nu, unlocks[xi][locknum])
+    }
+    locked := ck.Unlock(strconv.Itoa(locknum))
+    fmt.Printf("lock=%d nl=%d nu=%d locked=%v\n",
+       locknum, nl, nu, locked)
+
+    if nl < nu || nl > nu + 1 {
+      t.Fatal("lock race 1")
+    }
+    if nl == nu && locked != false {
+      t.Fatal("lock race 2")
+    }
+    if nl != nu && locked != true {
+      t.Fatal("lock race 3")
+    }
+  }
+
+  b.kill()
+  fmt.Printf("  ... Passed\n")
+}
 
 func TestConcurrentCounts(t *testing.T) {
   fmt.Printf("Test: Multiple clients, single lock, primary failure ...\n")
@@ -431,13 +516,17 @@ func TestConcurrentCounts(t *testing.T) {
         locknum := rr.Int() % nlocks
         lockname := strconv.Itoa(locknum)
         what := rr.Int() % 2
+
+        //fmt.Printf("Lock num %v, name %v, what %v\n", locknum, lockname, what)
         if what == 0 {
           if ck.Lock(lockname) {
             locks[i][locknum]++
+            fmt.Printf("TEST: Locked %v - %v\n", i, locks[i][locknum])
           }
         } else {
           if ck.Unlock(lockname) {
             unlocks[i][locknum]++
+            fmt.Printf("TEST: Unlocked %v - %v\n", i, unlocks[i][locknum])
           }
         }
       }
@@ -445,39 +534,9 @@ func TestConcurrentCounts(t *testing.T) {
     }(xi)
   }
 
-  time.Sleep(2 * time.Second)
-  p.kill()
-  time.Sleep(2 * time.Second)
+  time.Sleep(1 * time.Second)
   done = true
-  time.Sleep(time.Second)
-  for xi := 0; xi < nclients; xi++ {
-    if acks[xi] == false {
-      t.Fatal("one client didn't complete")
-    }
-  }
-  ck := MakeClerk(phost, bhost)
-  for locknum := 0; locknum < nlocks; locknum++ {
-    nl := 0
-    nu := 0
-    for xi := 0; xi < nclients; xi++ {
-      nl += locks[xi][locknum]
-      nu += unlocks[xi][locknum]
-    }
-    locked := ck.Unlock(strconv.Itoa(locknum))
-    // fmt.Printf("lock=%d nl=%d nu=%d locked=%v\n",
-    //   locknum, nl, nu, locked)
-    if nl < nu || nl > nu + 1 {
-      t.Fatal("lock race 1")
-    }
-    if nl == nu && locked != false {
-      t.Fatal("lock race 2")
-    }
-    if nl != nu && locked != true {
-      t.Fatal("lock race 3")
-    }
-  }
-
+  p.kill()
   b.kill()
-  fmt.Printf("  ... Passed\n")
 }
 */
