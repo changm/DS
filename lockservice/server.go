@@ -9,16 +9,6 @@ import "os"
 import "io"
 import "time"
 
-const NOINFO = 0
-const LOCKED = 1
-const UNLOCKED = 2
-
-type LockInfo struct {
-  name string
-  timestamp [50000]int
-  last int
-}
-
 type LockServer struct {
   mu sync.Mutex
   l net.Listener
@@ -27,176 +17,115 @@ type LockServer struct {
 
   am_primary bool // am I the primary?
   backup string   // backup's port
+  did_switch bool
 
-  // for each lock name, is it locked?
   locks map[string]bool
-  lockInfo map[string]*LockInfo
+  log map[int]bool
 }
 
-func (ls *LockServer) updateLock(args* LockArgs) {
-  var lockInfo, exist = ls.lockInfo[args.Lockname]
-  if !exist {
-    lockInfo = new(LockInfo);
-  }
-
-  lockInfo.timestamp[args.Clock] = LOCKED
-  lockInfo.last = args.Clock
-  ls.lockInfo[args.Lockname] = lockInfo
+func (ls* LockServer) createLogEntry(id int, success bool) {
+  //fmt.Printf("Creating log entry %v to %v\n", id, success)
+  ls.log[id] = success
 }
 
-func (ls *LockServer) updateUnlock(args* UnlockArgs) {
-  var lockInfo, exist = ls.lockInfo[args.Lockname]
-  if !exist {
-    lockInfo = new(LockInfo);
-  }
-
-  lockInfo.timestamp[args.Clock] = UNLOCKED
-  lockInfo.last = args.Clock
-  ls.lockInfo[args.Lockname] = lockInfo
+func (ls *LockServer) haveEntry(id int) bool {
+  _, exists := ls.log[id]
+  return exists
 }
 
-func (info* LockInfo) newMessage(clock int) bool {
-  return clock > info.last;
+func (ls* LockServer) updateBackup(args* LockArgs, reply* LockReply, locked bool) error {
+  if ls.am_primary && !ls.did_switch {
+    message := "LockServer.UpdateMessageStatus"
+    update := &UpdateMessage{}
+    update.Lockname = args.Lockname
+    update.Locked = locked
+    update.Id = args.Id
+    update.Success = reply.OK
+
+    call (ls.backup, message, update, reply)
+  }
+
+  return nil
 }
 
-func (info* LockInfo) getPrevious(clock int) (int, int) {
-  current := info.timestamp[clock]
-  if (current != 0) {
-    return clock, current;
-  }
-
-  for current = clock; current > 0; current-- {
-    lockStatus := info.timestamp[current];
-    if lockStatus != 0 {
-      //fmt.Printf("Returninng lock clock %v is %v\n", current, lockStatus)
-      return current, lockStatus;
-    }
-  }
-
-  return -1, NOINFO;
+func (ls* LockServer) UpdateMessageStatus(message UpdateMessage, reply* LockReply) error {
+  ls.locks[message.Lockname] = message.Locked
+  ls.createLogEntry(message.Id, message.Success)
+  return nil
 }
 
-// returns whether or not the message is old
-// if it is old, returns the approprirate unlock response
-func (ls* LockServer) oldUnlocked(clock int, lockName string) (bool, bool) {
-  var lockInfo, exists = ls.lockInfo[lockName]
-  //fmt.Printf("Does clock %v exist %v\n", clock, exists)
-
-  if !exists {
-    return false, false;
-  }
-
-  var oldClock = !lockInfo.newMessage(clock)
-  var unlockStatus = false
-
-  prevClock, lockStatus := lockInfo.getPrevious(clock)
-  if (prevClock == clock) {
-    unlockStatus = lockStatus == UNLOCKED
-  } else if (prevClock < clock) {
-    unlockStatus = lockStatus != UNLOCKED
-  }
-
-  //fmt.Printf("SERVER: current clock %v, Old clock %v - value is %v\n", clock, prevClock, unlockStatus)
-  return oldClock, unlockStatus
-}
-
-func (ls* LockServer) oldLocked(clock int, lockName string) (bool, bool) {
-  var lockInfo, exists = ls.lockInfo[lockName]
-  //fmt.Printf("Does clock %v exist %v\n", clock, exists)
-  if !exists || lockInfo.newMessage(clock) {
-    return false, false;
-  }
-
-  var oldClock = !lockInfo.newMessage(clock)
-  var lockStatus = false
-  prevClock, prevLockStatus := lockInfo.getPrevious(clock)
-
-  if (prevClock == clock) {
-    lockStatus = prevLockStatus == LOCKED
-  } else if (prevClock < clock) {
-    lockStatus = prevLockStatus != LOCKED
-  }
-
-  //fmt.Printf("SERVER: OLD LOCK current clock %v, Old clock %v - value is %v\n", clock, prevClock, lockStatus)
-  return oldClock, lockStatus
-}
-
-//
 // server Lock RPC handler.
 //
 // you will have to modify this function
 //
 func (ls *LockServer) Lock(args *LockArgs, reply *LockReply) error {
-  ls.mu.Lock()
-  // Actually only have 1 global lock
-  defer ls.mu.Unlock()
-
-  prevClock, prevLock := ls.oldLocked(args.Clock, args.Lockname)
-
-  if prevClock {
-    reply.OK = prevLock;
-    //fmt.Printf("Lock returning early at clock %v because old lock reply %v\n",
-      //args.Clock, reply.OK);
+  if ls.haveEntry(args.Id) {
+    fmt.Printf("Have a log entry already for arg %v\n", args.Id)
+    reply.OK = false
     return nil
-   }
-
-  locked, _ := ls.locks[args.Lockname]
-
-/*
-  if !ls.am_primary {
-    fmt.Printf("Backup Is locking - %v. Already locked %v\n", args.Lockname, locked);
-  } else {
-    fmt.Printf("Primary is locking %v. Already locked  %v\n", args.Lockname, locked);
   }
-  */
+
+  ls.mu.Lock()
+  defer ls.mu.Unlock()
+  locked, _ := ls.locks[args.Lockname]
 
   if locked {
     reply.OK = false
   } else {
     reply.OK = true
-    ls.updateLock(args)
     ls.locks[args.Lockname] = true
   }
 
-  if ls.am_primary {
-    call (ls.backup, "LockServer.Lock", args, reply)
-  }
-
-  //fmt.Printf("Lock at clock %v returning %v\n", args.Clock, reply.OK)
+  ls.createLogEntry(args.Id, reply.OK)
+  ls.updateBackup(args, reply, ls.locks[args.Lockname])
   return nil
 }
 
 //
 // server Unlock RPC handler.
 //
-func (ls *LockServer) Unlock(args *UnlockArgs, reply *UnlockReply) error {
-  var locked, _ = ls.locks[args.Lockname];
-   ls.mu.Lock();
-   defer ls.mu.Unlock();
-
-   prevClock, prevLock := ls.oldUnlocked(args.Clock, args.Lockname)
-
-   if prevClock {
-    reply.OK = prevLock;
-    //fmt.Printf("Unlock early clock %v returning %v\n", args.Clock, reply.OK)
+func (ls *LockServer) Unlock(args *LockArgs, reply *LockReply) error {
+  if ls.haveEntry(args.Id) {
+    fmt.Printf("Have a log entry already for arg %v\n", args.Id)
+    reply.OK = false
     return nil
-   }
+  }
 
-   if locked {
+
+  ls.mu.Lock();
+  defer ls.mu.Unlock();
+
+  var locked, _ = ls.locks[args.Lockname];
+  if locked {
     reply.OK = true;
     ls.locks[args.Lockname] = false
-    ls.updateUnlock(args)
   } else {
-    //fmt.Printf("Not locked! Should be a false\n");
     reply.OK = false;
   }
 
-  if ls.am_primary {
-    var backupReply LockReply
-    call (ls.backup, "LockServer.Unlock", args, &backupReply);
+  ls.createLogEntry(args.Id, reply.OK)
+  ls.updateBackup(args, reply, ls.locks[args.Lockname])
+  return nil
+}
+
+func (ls *LockServer) BecomePrimary(args *LockArgs, reply *LockReply)  error {
+  ls.am_primary = true
+  ls.did_switch = true
+  reply.OK = true
+  return nil
+}
+
+func (ls *LockServer) GetLog(args *LockArgs, reply *LockReply) error {
+  id := args.Id
+  logValue, exists := ls.log[id]
+  //fmt.Printf("Log value %v exists\n", exists)
+  if !exists {
+    //fmt.Printf("Checked for log %v, didn't exist\n", id)
+    logValue = false
   }
 
-  //fmt.Printf("Unlock clock %v returning %v\n", args.Clock, reply.OK)
+  reply.OK = logValue
+  reply.LogEntry = exists
   return nil
 }
 
@@ -235,15 +164,13 @@ func initLockServer(primary string, backup string, am_primary bool) *LockServer 
   ls.backup = backup
   ls.am_primary = am_primary
   ls.locks = map[string]bool{}
-  ls.lockInfo = map[string]*LockInfo{}
+  ls.log = map[int]bool{}
+  ls.did_switch = false
   return ls;
 }
 
 func StartServer(primary string, backup string, am_primary bool) *LockServer {
   ls := initLockServer(primary, backup, am_primary);
-
-  // Your initialization code here.
-
 
   me := ""
   if am_primary {

@@ -1,7 +1,6 @@
 package lockservice
-import "fmt"
-
-var clock int;
+//import "fmt"
+import "sync"
 
 //
 // the lockservice Clerk lives in the client
@@ -18,6 +17,15 @@ func MakeClerk(primary string, backup string) *Clerk {
   return ck
 }
 
+var id int;
+var clockLock sync.Mutex;
+
+func getId() int {
+  clockLock.Lock()
+  defer clockLock.Unlock()
+  id++
+  return id
+}
 
 //
 // ask the lock service for a lock.
@@ -28,32 +36,20 @@ func MakeClerk(primary string, backup string) *Clerk {
 //
 func (ck *Clerk) Lock(lockname string) bool {
   // prepare the arguments.
-  clock++;
-
   args := &LockArgs{}
   args.Lockname = lockname
-  args.Clock = clock
-  fmt.Printf("Sending primary lock clock %v\n", args.Clock)
+  args.Id = getId()
 
   var reply LockReply
-  //fmt.Printf("Sending primary lock %v\n", args.Stamp);
-  // send an RPC request, wait for the reply.
   isAlive := call(ck.servers[0], "LockServer.Lock", args, &reply)
+
   if isAlive == false {
     // Talk to the backup
-    fmt.Printf("\nPrimary failed. Sending backup lock %v\n", args.Clock);
-    ok := call(ck.servers[1], "LockServer.Lock", args, &reply)
-    fmt.Printf("Backup lock clock %v - replied %v\n", args.Clock, reply.OK);
-
-    if ok == false {
-      return false
-    }
+    return ck.recover(args, "LockServer.Lock")
   }
 
-  fmt.Printf("Lock clock %v returning %v\n", args.Clock, reply.OK)
   return reply.OK
 }
-
 
 //
 // ask the lock service to unlock a lock.
@@ -61,28 +57,43 @@ func (ck *Clerk) Lock(lockname string) bool {
 // false otherwise.
 //
 func (ck *Clerk) Unlock(lockname string) bool {
-  clock++;
-
   // prepare the arguments.
-  args := &UnlockArgs{}
+  args := &LockArgs{}
   args.Lockname = lockname
-  args.Clock = clock
-
-  fmt.Printf("Sending primary Unlock clock %v\n", clock)
-
-  var reply UnlockReply
+  args.Id = getId()
+  var reply LockReply
 
   // send an RPC request, wait for the reply.
   isAlive := call(ck.servers[0], "LockServer.Unlock", args, &reply)
   if isAlive == false {
-    fmt.Printf("\nPrimary failed. Sending backup unlock %v\n", args.Clock);
-    ok := call(ck.servers[1], "LockServer.Unlock", args, &reply)
-    fmt.Printf("Backup Unlock clock %v reply %v\n", args.Clock, reply.OK)
-    if ok == false {
-      return false
-    }
+    return ck.recover(args, "LockServer.Unlock")
   }
 
-  fmt.Printf("Unlock clock %v returning %v\n", args.Clock, reply.OK)
+  return reply.OK
+}
+
+// When the primary dies, swap to the backup
+func (ck *Clerk) switchPrimary() bool {
+  ck.servers[0] = ck.servers[1]
+
+  args := &LockArgs{}
+  var reply LockReply
+
+  call(ck.servers[0], "LockServer.BecomePrimary", args, &reply)
+
+  ck.servers[1] = "Undefined"
+  return true
+}
+
+func (ck *Clerk) recover(args* LockArgs, service string) bool {
+  ck.switchPrimary()
+  var reply LockReply
+  call(ck.servers[0], "LockServer.GetLog", args, &reply)
+  if reply.LogEntry {
+    return reply.OK
+  }
+
+  //fmt.Printf("Didn't have a log so submitting actual request\n")
+  call(ck.servers[0], service, args, &reply)
   return reply.OK
 }

@@ -1,7 +1,5 @@
 package lockservice
-
 import "net/rpc"
-//import "fmt"
 
 //
 // RPC definitions for a simple lock service.
@@ -17,24 +15,19 @@ type LockArgs struct {
   // Go's net/rpc requires that these field
   // names start with upper case letters!
   Lockname string  // lock name
-  Clock int
+  Id int
 }
 
 type LockReply struct {
   OK bool
+  LogEntry bool
 }
 
-//
-// Unlock(lockname) returns OK=true if the lock was held.
-// It returns OK=false if the lock was not held.
-//
-type UnlockArgs struct {
+type UpdateMessage struct {
   Lockname string
-  Clock int
-}
-
-type UnlockReply struct {
-  OK bool
+  Locked bool
+  Id int
+  Success bool
 }
 
 // call() sends an RPC to the rpcname handler on server srv
@@ -54,6 +47,7 @@ type UnlockReply struct {
 //
 func call(srv string, rpcname string,
           args interface{}, reply interface{}) bool {
+
   c, errx := rpc.Dial("unix", srv)
   if errx != nil {
     return false
