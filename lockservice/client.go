@@ -35,20 +35,7 @@ func getId() int {
 // you will have to modify this function.
 //
 func (ck *Clerk) Lock(lockname string) bool {
-  // prepare the arguments.
-  args := &LockArgs{}
-  args.Lockname = lockname
-  args.Id = getId()
-
-  var reply LockReply
-  isAlive := call(ck.servers[0], "LockServer.Lock", args, &reply)
-
-  if isAlive == false {
-    // Talk to the backup
-    return ck.recover(args, "LockServer.Lock")
-  }
-
-  return reply.OK
+  return ck.sendRequest(lockname, "LockServer.Lock")
 }
 
 //
@@ -57,16 +44,19 @@ func (ck *Clerk) Lock(lockname string) bool {
 // false otherwise.
 //
 func (ck *Clerk) Unlock(lockname string) bool {
-  // prepare the arguments.
+  return ck.sendRequest(lockname, "LockServer.Unlock")
+}
+
+func (ck *Clerk) sendRequest(lockname string, service string) bool {
   args := &LockArgs{}
   args.Lockname = lockname
   args.Id = getId()
   var reply LockReply
 
   // send an RPC request, wait for the reply.
-  isAlive := call(ck.servers[0], "LockServer.Unlock", args, &reply)
+  isAlive := call(ck.servers[0], service, args, &reply)
   if isAlive == false {
-    return ck.recover(args, "LockServer.Unlock")
+    return ck.recover(args, service)
   }
 
   return reply.OK
@@ -75,12 +65,10 @@ func (ck *Clerk) Unlock(lockname string) bool {
 // When the primary dies, swap to the backup
 func (ck *Clerk) switchPrimary() bool {
   ck.servers[0] = ck.servers[1]
-
   args := &LockArgs{}
   var reply LockReply
 
   call(ck.servers[0], "LockServer.BecomePrimary", args, &reply)
-
   ck.servers[1] = "Undefined"
   return true
 }

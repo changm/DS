@@ -60,7 +60,6 @@ func (ls* LockServer) UpdateMessageStatus(message UpdateMessage, reply* LockRepl
 //
 func (ls *LockServer) Lock(args *LockArgs, reply *LockReply) error {
   if ls.haveEntry(args.Id) {
-    fmt.Printf("Have a log entry already for arg %v\n", args.Id)
     reply.OK = false
     return nil
   }
@@ -86,16 +85,14 @@ func (ls *LockServer) Lock(args *LockArgs, reply *LockReply) error {
 //
 func (ls *LockServer) Unlock(args *LockArgs, reply *LockReply) error {
   if ls.haveEntry(args.Id) {
-    fmt.Printf("Have a log entry already for arg %v\n", args.Id)
     reply.OK = false
     return nil
   }
 
-
   ls.mu.Lock();
   defer ls.mu.Unlock();
-
   var locked, _ = ls.locks[args.Lockname];
+
   if locked {
     reply.OK = true;
     ls.locks[args.Lockname] = false
