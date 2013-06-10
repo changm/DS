@@ -27,7 +27,7 @@ func port(suffix string) string {
   s := "/var/tmp/824-"
   s += strconv.Itoa(os.Getuid()) + "/"
   os.Mkdir(s, 0777)
-  s += "viewserver-" 
+  s += "viewserver-"
   s += strconv.Itoa(os.Getpid()) + "-"
   s += suffix
   return s
@@ -150,29 +150,11 @@ func Test1(t *testing.T) {
       }
       time.Sleep(PingInterval)
     }
-    vy, _ := ck3.Get()
-    if vy.Primary != ck3.me {
-      t.Fatalf("expected primary=%v, got %v\n", ck3.me, vy.Primary)
-    }
+    check(t, ck3, ck3.me, "", vx.Viewnum + 1)
   }
   fmt.Printf("  ... Passed\n")
-  
 
-  // set up a view with just 3 as primary,
-  // to prepare for the next test.
-  {
-    for i := 0; i < DeadPings * 3; i++ {
-      vx, _ := ck3.Get()
-      ck3.Ping(vx.Viewnum)
-      time.Sleep(PingInterval)
-    }
-    v, _ := ck3.Get()
-    if v.Primary != ck3.me || v.Backup != "" {
-      t.Fatalf("wrong primary or backup")
-    }
-  }
-
-  // does viewserver wait for ack of previous view before
+  // does vieserver wait for ack of previous view before
   // starting the next one?
   fmt.Printf("Test: Viewserver waits for primary to ack view ...\n")
   
@@ -191,8 +173,8 @@ func Test1(t *testing.T) {
     }
     check(t, ck1, ck3.me, ck1.me, vx.Viewnum+1)
     vy, _ := ck1.Get()
-    // ck3 is the primary, but it never acked.
-    // let ck3 die. check that ck1 is not promoted.
+    // let ck3 die without acking; since primary
+    // never acked, viewserver should not proceed.
     for i := 0; i < DeadPings * 3; i++ {
       v, _ := ck1.Ping(vy.Viewnum)
       if v.Viewnum > vy.Viewnum {

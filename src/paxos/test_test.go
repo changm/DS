@@ -40,7 +40,7 @@ func ndecided(t *testing.T, pxa []*Paxos, seq int) int {
 
 func waitn(t *testing.T, pxa[]*Paxos, seq int, wanted int) {
   to := 10 * time.Millisecond
-  for iters := 0; iters < 30; iters++ {
+  for iters := 0; iters < 10; iters++ {
     if ndecided(t, pxa, seq) >= wanted {
       break
     }
@@ -56,7 +56,7 @@ func waitn(t *testing.T, pxa[]*Paxos, seq int, wanted int) {
 }
 
 func waitmajority(t *testing.T, pxa[]*Paxos, seq int) {
-  waitn(t, pxa, seq, (len(pxa) / 2) + 1)
+  waitn(t, pxa, seq, len(pxa) / 2)
 }
 
 func checkmax(t *testing.T, pxa[]*Paxos, seq int, max int) {
@@ -84,7 +84,7 @@ func noTestSpeed(t *testing.T) {
   defer cleanup(pxa)
 
   for i := 0; i < npaxos; i++ {
-    pxh[i] = port("time", i)
+    pxh[i] = port("basic", i)
   }
   for i := 0; i < npaxos; i++ {
     pxa[i] = Make(pxh, i, nil)
@@ -299,21 +299,19 @@ func TestManyForget(t *testing.T) {
   }
   for i := 0; i < npaxos; i++ {
     pxa[i] = Make(pxh, i, nil)
-    pxa[i].unreliable = true
   }
 
   fmt.Printf("Test: Lots of forgetting ...\n")
 
-  const maxseq = 20
+  const maxseq = 30
   done := false
 
   go func() {
-    na := rand.Perm(maxseq)
-    for i := 0; i < len(na); i++ {
-      seq := na[i]
-      j := (rand.Int() % npaxos)
+    for done == false {
+      seq := (rand.Int() % maxseq)
+      i := (rand.Int() % npaxos)
       v := rand.Int() 
-      pxa[j].Start(seq, v)
+      pxa[i].Start(seq, v)
       runtime.Gosched()
     }
   }()
@@ -334,10 +332,7 @@ func TestManyForget(t *testing.T) {
 
   time.Sleep(5 * time.Second)
   done = true
-  for i := 0; i < npaxos; i++ {
-    pxa[i].unreliable = false
-  }
-  time.Sleep(2 * time.Second)
+  time.Sleep(1 * time.Second)
 
   for seq := 0; seq < maxseq; seq++ {
     for i := 0; i < npaxos; i++ {
@@ -417,78 +412,6 @@ func TestForgetMem(t *testing.T) {
   fmt.Printf("  ... Passed\n")
 }
 
-func TestRPCCount(t *testing.T) {
-  runtime.GOMAXPROCS(4)
-
-  fmt.Printf("Test: RPC counts aren't too high ...\n")
-
-  const npaxos = 3
-  var pxa []*Paxos = make([]*Paxos, npaxos)
-  var pxh []string = make([]string, npaxos)
-  defer cleanup(pxa)
-
-  for i := 0; i < npaxos; i++ {
-    pxh[i] = port("count", i)
-  }
-  for i := 0; i < npaxos; i++ {
-    pxa[i] = Make(pxh, i, nil)
-  }
-
-  ninst1 := 5
-  seq := 0
-  for i := 0; i < ninst1; i++ {
-    pxa[0].Start(seq, "x")
-    waitn(t, pxa, seq, npaxos)
-    seq++
-  }
-
-  time.Sleep(2 * time.Second)
-
-  total1 := 0
-  for j := 0; j < npaxos; j++ {
-    total1 += pxa[j].rpcCount
-  }
-
-  // per agreement:
-  // 3 prepares
-  // 3 accepts
-  // 3 decides
-  expected1 := ninst1 * npaxos * npaxos
-  if total1 > expected1 {
-    t.Fatalf("too many RPCs for serial Start()s; %v instances, got %v, expected %v",
-      ninst1, total1, expected1)
-  }
-
-  ninst2 := 5
-  for i := 0; i < ninst2; i++ {
-    for j := 0; j < npaxos; j++ {
-      go pxa[j].Start(seq, j + (i * 10))
-    }
-    waitn(t, pxa, seq, npaxos)
-    seq++
-  }
-
-  time.Sleep(2 * time.Second)
-
-  total2 := 0
-  for j := 0; j < npaxos; j++ {
-    total2 += pxa[j].rpcCount
-  }
-  total2 -= total1
-
-  // per agreement:
-  // 9 prepares
-  // 9 accepts
-  // 9 decides
-  expected2 := ninst2 * npaxos * (npaxos + npaxos + npaxos)
-  if total2 > expected2 {
-    t.Fatalf("too many RPCs for concurrent Start()s; %v instances, got %v, expected %v",
-      ninst2, total2, expected2)
-  }
-
-  fmt.Printf("  ... Passed\n")
-}
-
 //
 // many agreements (without failures)
 //
@@ -497,7 +420,7 @@ func TestMany(t *testing.T) {
 
   fmt.Printf("Test: Many instances ...\n")
 
-  const npaxos = 3
+  const npaxos = 4
   var pxa []*Paxos = make([]*Paxos, npaxos)
   var pxh []string = make([]string, npaxos)
   defer cleanup(pxa)
@@ -512,9 +435,9 @@ func TestMany(t *testing.T) {
 
   const ninst = 50
   for seq := 1; seq < ninst; seq++ {
-    // only 5 active instances, to limit the
+    // only 10 active instances, to limit the
     // number of file descriptors.
-    for seq >= 5 && ndecided(t, pxa, seq - 5) < npaxos {
+    for seq >= 10 && ndecided(t, pxa, seq - 10) < npaxos {
       time.Sleep(20 * time.Millisecond)
     }
     for i := 0; i < npaxos; i++ {
@@ -584,7 +507,7 @@ func TestManyUnreliable(t *testing.T) {
 
   fmt.Printf("Test: Many instances, unreliable RPC ...\n")
 
-  const npaxos = 3
+  const npaxos = 4
   var pxa []*Paxos = make([]*Paxos, npaxos)
   var pxh []string = make([]string, npaxos)
   defer cleanup(pxa)
@@ -600,9 +523,9 @@ func TestManyUnreliable(t *testing.T) {
 
   const ninst = 50
   for seq := 1; seq < ninst; seq++ {
-    // only 3 active instances, to limit the
+    // only 10 active instances, to limit the
     // number of file descriptors.
-    for seq >= 3 && ndecided(t, pxa, seq - 3) < npaxos {
+    for seq >= 10 && ndecided(t, pxa, seq - 10) < npaxos {
       time.Sleep(20 * time.Millisecond)
     }
     for i := 0; i < npaxos; i++ {
@@ -657,9 +580,6 @@ func part(t *testing.T, tag string, npaxos int, p1 []int, p2 []int, p3 []int) {
         pj := port(tag, p[j])
         err := os.Link(pj, ij)
         if err != nil {
-          // one reason this link can fail is if the
-          // corresponding Paxos peer has prematurely quit and
-          // deleted its socket file (e.g., called px.Kill()).
           t.Fatalf("os.Link(%v, %v): %v\n", pj, ij, err)
         }
       }
@@ -738,30 +658,23 @@ func TestPartition(t *testing.T) {
 
   fmt.Printf("Test: One peer switches partitions, unreliable ...\n")
 
+  for i := 0; i < npaxos; i++ {
+    pxa[i].unreliable = true
+  }
 
   for iters := 0; iters < 20; iters++ {
     seq++
 
-    for i := 0; i < npaxos; i++ {
-      pxa[i].unreliable = true
-    }
-
     part(t, tag, npaxos, []int{0,1,2}, []int{3,4}, []int{})
-    for i := 0; i < npaxos; i++ {
-      pxa[i].Start(seq, (seq * 10) + i)
-    }
-    waitn(t, pxa, seq, 3)
+    pxa[0].Start(seq, seq * 10)
+    pxa[3].Start(seq, (seq * 10) + 1)
+    waitmajority(t, pxa, seq)
     if ndecided(t, pxa, seq) > 3 {
       t.Fatalf("too many decided")
     }
     
     part(t, tag, npaxos, []int{0,1}, []int{2,3,4}, []int{})
-
-    for i := 0; i < npaxos; i++ {
-      pxa[i].unreliable = false
-    }
-
-    waitn(t, pxa, seq, 5)
+    waitn(t, pxa, seq, 4)
   }
 
   fmt.Printf("  ... Passed\n")
@@ -795,9 +708,7 @@ func TestLots(t *testing.T) {
   done := false
 
   // re-partition periodically
-  ch1 := make(chan bool)
   go func() {
-    defer func(){ ch1 <- true }()
     for done == false {
       var a [npaxos]int
       for i := 0; i < npaxos; i++ {
@@ -820,9 +731,7 @@ func TestLots(t *testing.T) {
   seq := 0
 
   // periodically start a new instance
-  ch2 := make(chan bool)
   go func () {
-    defer func() { ch2 <- true } ()
     for done == false {
       // how many instances are in progress?
       nd := 0
@@ -831,9 +740,16 @@ func TestLots(t *testing.T) {
           nd++
         }
       }
-      if seq - nd < 10 {
+      if seq - nd < 20 {
+        n := 0
         for i := 0; i < npaxos; i++ {
-          pxa[i].Start(seq, rand.Int() % 10)
+          if (rand.Int() % 100) < 30 {
+            n++
+            pxa[i].Start(seq, rand.Int() % 10)
+          }
+        }
+        if n == 0 {
+          pxa[0].Start(seq, rand.Int() % 10)
         }
         seq++
       }
@@ -842,9 +758,7 @@ func TestLots(t *testing.T) {
   }()
 
   // periodically check that decisions are consistent
-  ch3 := make(chan bool)
   go func() {
-    defer func() { ch3 <- true }()
     for done == false {
       for i := 0; i < seq; i++ {
         ndecided(t, pxa, i)
@@ -855,9 +769,7 @@ func TestLots(t *testing.T) {
 
   time.Sleep(20 * time.Second)
   done = true
-  <- ch1
-  <- ch2
-  <- ch3
+  time.Sleep(2 * time.Second)
 
   // repair, then check that all instances decided.
   for i := 0; i < npaxos; i++ {

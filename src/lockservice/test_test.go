@@ -90,16 +90,17 @@ func TestPrimaryFail1(t *testing.T) {
   tu(t, ck, "d", true)
   tl(t, ck, "d", true)
 
+  // a, c, and d are locked
   p.kill()
-  
+
   tl(t, ck, "a", false)
   tu(t, ck, "a", true)
 
   tu(t, ck, "b", false)
+
   tl(t, ck, "b", true)
 
   tu(t, ck, "c", true)
-
   tu(t, ck, "d", true)
 
   b.kill()
@@ -124,11 +125,13 @@ func TestPrimaryFail2(t *testing.T) {
   p.dying = true
 
   tl(t, ck2, "c", true)
+
   tl(t, ck1, "c", false)
   tu(t, ck2, "c", true)
   tl(t, ck1, "c", true)
 
   b.kill()
+  p.kill()
   fmt.Printf("  ... Passed\n")
 }
 
@@ -257,7 +260,7 @@ func TestPrimaryFail7(t *testing.T) {
   time.Sleep(1 * time.Second)
   tl(t, ck1, "b", true)
 
-  ok := <- ch
+  ok := <-ch
   if ok == false {
     t.Fatalf("re-sent Unlock did not return true")
   }
@@ -281,7 +284,7 @@ func TestPrimaryFail8(t *testing.T) {
   ck2 := MakeClerk(phost, bhost)
 
   tl(t, ck1, "a", true)
-  tu(t, ck1, "a", true)
+  tu(t, ck2, "a", true)
 
   p.dying = true
 
@@ -292,10 +295,11 @@ func TestPrimaryFail8(t *testing.T) {
     tu(t, ck2, "a", false) // 2 second delay until retry
     ok = true
   }()
+
   time.Sleep(1 * time.Second)
   tl(t, ck1, "a", true)
 
-  ok := <- ch
+  ok := <-ch
   if ok == false {
     t.Fatalf("re-sent Unlock did not return false")
   }
@@ -330,7 +334,7 @@ func TestBackupFail(t *testing.T) {
   tl(t, ck, "d", true)
 
   b.kill()
-  
+
   tl(t, ck, "a", false)
   tu(t, ck, "a", true)
 
@@ -427,12 +431,16 @@ func TestConcurrentCounts(t *testing.T) {
         locknum := rr.Int() % nlocks
         lockname := strconv.Itoa(locknum)
         what := rr.Int() % 2
+
+        //fmt.Printf("Lock num %v, name %v, what %v\n", locknum, lockname, what)
         if what == 0 {
           if ck.Lock(lockname) {
+            //fmt.Printf("TEST: Locked %v - %v\n", i, locknum)
             locks[i][locknum]++
           }
         } else {
           if ck.Unlock(lockname) {
+            //fmt.Printf("TEST: Unlocked %v - %v\n", i, locknum)
             unlocks[i][locknum]++
           }
         }
@@ -441,9 +449,9 @@ func TestConcurrentCounts(t *testing.T) {
     }(xi)
   }
 
-  time.Sleep(2 * time.Second)
+  time.Sleep(1 * time.Second)
   p.kill()
-  time.Sleep(2 * time.Second)
+  time.Sleep(1 * time.Second)
   done = true
   time.Sleep(time.Second)
   for xi := 0; xi < nclients; xi++ {
@@ -455,13 +463,13 @@ func TestConcurrentCounts(t *testing.T) {
   for locknum := 0; locknum < nlocks; locknum++ {
     nl := 0
     nu := 0
+    fmt.Printf("Unlcoking stuff\n");
     for xi := 0; xi < nclients; xi++ {
       nl += locks[xi][locknum]
       nu += unlocks[xi][locknum]
     }
     locked := ck.Unlock(strconv.Itoa(locknum))
-    // fmt.Printf("lock=%d nl=%d nu=%d locked=%v\n",
-    //   locknum, nl, nu, locked)
+
     if nl < nu || nl > nu + 1 {
       t.Fatal("lock race 1")
     }
@@ -476,3 +484,4 @@ func TestConcurrentCounts(t *testing.T) {
   b.kill()
   fmt.Printf("  ... Passed\n")
 }
+

@@ -19,25 +19,71 @@ type PBServer struct {
   unreliable bool // for testing
   me string
   vs *viewservice.Clerk
+  currentView uint
+  isPrimary bool
+  isBackup bool
+  values map[string] string
   // Your declarations here.
 }
 
+func (pb *PBServer) init() {
+  pb.currentView = 0
+  pb.isPrimary = false
+  pb.isBackup = false
+  pb.values = make(map[string] string)
+}
+
 func (pb *PBServer) Get(args *GetArgs, reply *GetReply) error {
-
   // Your code here.
+  key := args.Key
+  if pb.isPrimary {
+    value, validKey := pb.values[key]
+    if validKey {
+      reply.Value = value
+    } else {
+      reply.Value = ""
+      reply.Err = ErrNoKey
+    }
+  } else {
+    reply.Err = ErrWrongServer
+  }
 
+  return nil
+}
+
+func (pb *PBServer) updateBackup(args *PutArgs) error {
+  // TODO update backup
+  fmt.Printf("Updating backup\n");
   return nil
 }
 
 func (pb *PBServer) Put(args *PutArgs, reply *PutReply) error {
-  reply.Err = OK
-
-
-  // Your code here.
-
+  key, value := args.Key, args.Value
+  fmt.Printf("PUTTING SOMETHING\n")
+  if pb.isPrimary {
+    fmt.Printf("PB is primary\n")
+    pb.values[key] = value
+    pb.updateBackup(args)
+    reply.Err = OK
+  } else {
+    reply.Err = ErrWrongServer
+  }
   return nil
 }
 
+func (pb *PBServer) transitionView(view viewservice.View) {
+  if pb.me == view.Primary {
+    pb.isPrimary = true
+    pb.isBackup = false
+  } else if pb.me == view.Backup {
+    pb.isPrimary = false
+    pb.isBackup = true
+  } else {
+    fmt.Printf("PB Server transitioned view but not backup or primary\n")
+  }
+
+  pb.currentView = view.Viewnum
+}
 
 //
 // ping the viewserver periodically.
@@ -46,8 +92,16 @@ func (pb *PBServer) Put(args *PutArgs, reply *PutReply) error {
 //   manage transfer of state from primary to new backup.
 //
 func (pb *PBServer) tick() {
+  view, error := pb.vs.Ping(pb.currentView)
+  //fmt.Printf("view is: %v, error %v\n", view, error)
+  if error != nil {
+    fmt.Printf("Error ticking\n")
+  }
 
-  // Your code here.
+  if pb.currentView != view.Viewnum {
+    //fmt.Printf("Transitioining view\n")
+    pb.transitionView(view)
+  }
 }
 
 // tell the server to shut itself down.
@@ -57,12 +111,12 @@ func (pb *PBServer) kill() {
   pb.l.Close()
 }
 
-
 func StartServer(vshost string, me string) *PBServer {
   pb := new(PBServer)
   pb.me = me
   pb.vs = viewservice.MakeClerk(me, vshost)
-  // Your pb.* initializations here.
+  fmt.Printf("View service: %v\n", pb.vs)
+  pb.init()
 
   rpcs := rpc.NewServer()
   rpcs.Register(pb)

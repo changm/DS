@@ -8,7 +8,6 @@ type Clerk struct {
   // You will have to modify this struct.
 }
 
-
 func MakeClerk(servers []string) *Clerk {
   ck := new(Clerk)
   ck.servers = servers

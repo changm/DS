@@ -1,6 +1,6 @@
 package lockservice
-
-import "net/rpc"
+//import "fmt"
+import "sync"
 
 //
 // the lockservice Clerk lives in the client
@@ -8,47 +8,23 @@ import "net/rpc"
 //
 type Clerk struct {
   servers [2]string // primary port, backup port
-  // Your definitions here.
 }
-
 
 func MakeClerk(primary string, backup string) *Clerk {
   ck := new(Clerk)
   ck.servers[0] = primary
   ck.servers[1] = backup
-  // Your initialization code here.
   return ck
 }
 
-//
-// call() sends an RPC to the rpcname handler on server srv
-// with arguments args, waits for the reply, and leaves the
-// reply in reply. the reply argument should be the address
-// of a reply structure.
-//
-// call() returns true if the server responded, and false
-// if call() was not able to contact the server. in particular,
-// reply's contents are valid if and only if call() returned true.
-//
-// you should assume that call() will time out and return an
-// error after a while if it doesn't get a reply from the server.
-//
-// please use call() to send all RPCs, in client.go and server.go.
-// please don't change this function.
-//
-func call(srv string, rpcname string,
-          args interface{}, reply interface{}) bool {
-  c, errx := rpc.Dial("unix", srv)
-  if errx != nil {
-    return false
-  }
-  defer c.Close()
-    
-  err := c.Call(rpcname, args, reply)
-  if err == nil {
-    return true
-  }
-  return false
+var id int;
+var clockLock sync.Mutex;
+
+func getId() int {
+  clockLock.Lock()
+  defer clockLock.Unlock()
+  id++
+  return id
 }
 
 //
@@ -59,30 +35,53 @@ func call(srv string, rpcname string,
 // you will have to modify this function.
 //
 func (ck *Clerk) Lock(lockname string) bool {
-  // prepare the arguments.
-  args := &LockArgs{}
-  args.Lockname = lockname
-  var reply LockReply
-  
-  // send an RPC request, wait for the reply.
-  ok := call(ck.servers[0], "LockServer.Lock", args, &reply)
-  if ok == false {
-    return false
-  }
-  
-  return reply.OK
+  return ck.sendRequest(lockname, "LockServer.Lock")
 }
-
 
 //
 // ask the lock service to unlock a lock.
 // returns true if the lock was previously held,
 // false otherwise.
 //
-
 func (ck *Clerk) Unlock(lockname string) bool {
+  return ck.sendRequest(lockname, "LockServer.Unlock")
+}
 
-  // Your code here.
+func (ck *Clerk) sendRequest(lockname string, service string) bool {
+  args := &LockArgs{}
+  args.Lockname = lockname
+  args.Id = getId()
+  var reply LockReply
 
-  return false
+  // send an RPC request, wait for the reply.
+  isAlive := call(ck.servers[0], service, args, &reply)
+  if isAlive == false {
+    return ck.recover(args, service)
+  }
+
+  return reply.OK
+}
+
+// When the primary dies, swap to the backup
+func (ck *Clerk) switchPrimary() bool {
+  ck.servers[0] = ck.servers[1]
+  args := &LockArgs{}
+  var reply LockReply
+
+  call(ck.servers[0], "LockServer.BecomePrimary", args, &reply)
+  ck.servers[1] = "Undefined"
+  return true
+}
+
+func (ck *Clerk) recover(args* LockArgs, service string) bool {
+  ck.switchPrimary()
+  var reply LockReply
+  call(ck.servers[0], "LockServer.GetLog", args, &reply)
+  if reply.LogEntry {
+    return reply.OK
+  }
+
+  //fmt.Printf("Didn't have a log so submitting actual request\n")
+  call(ck.servers[0], service, args, &reply)
+  return reply.OK
 }

@@ -17,22 +17,55 @@ type LockServer struct {
 
   am_primary bool // am I the primary?
   backup string   // backup's port
+  did_switch bool
 
-  // for each lock name, is it locked?
   locks map[string]bool
+  log map[int]bool
 }
 
+func (ls* LockServer) createLogEntry(id int, success bool) {
+  //fmt.Printf("Creating log entry %v to %v\n", id, success)
+  ls.log[id] = success
+}
 
-//
+func (ls *LockServer) haveEntry(id int) bool {
+  _, exists := ls.log[id]
+  return exists
+}
+
+func (ls* LockServer) updateBackup(args* LockArgs, reply* LockReply, locked bool) error {
+  if ls.am_primary && !ls.did_switch {
+    message := "LockServer.UpdateMessageStatus"
+    update := &UpdateMessage{}
+    update.Lockname = args.Lockname
+    update.Locked = locked
+    update.Id = args.Id
+    update.Success = reply.OK
+
+    call (ls.backup, message, update, reply)
+  }
+
+  return nil
+}
+
+func (ls* LockServer) UpdateMessageStatus(message UpdateMessage, reply* LockReply) error {
+  ls.locks[message.Lockname] = message.Locked
+  ls.createLogEntry(message.Id, message.Success)
+  return nil
+}
+
 // server Lock RPC handler.
 //
 // you will have to modify this function
 //
 func (ls *LockServer) Lock(args *LockArgs, reply *LockReply) error {
+  if ls.haveEntry(args.Id) {
+    reply.OK = false
+    return nil
+  }
+
   ls.mu.Lock()
   defer ls.mu.Unlock()
-
-
   locked, _ := ls.locks[args.Lockname]
 
   if locked {
@@ -42,16 +75,54 @@ func (ls *LockServer) Lock(args *LockArgs, reply *LockReply) error {
     ls.locks[args.Lockname] = true
   }
 
+  ls.createLogEntry(args.Id, reply.OK)
+  ls.updateBackup(args, reply, ls.locks[args.Lockname])
   return nil
 }
 
 //
 // server Unlock RPC handler.
 //
-func (ls *LockServer) Unlock(args *UnlockArgs, reply *UnlockReply) error {
+func (ls *LockServer) Unlock(args *LockArgs, reply *LockReply) error {
+  if ls.haveEntry(args.Id) {
+    reply.OK = false
+    return nil
+  }
 
-  // Your code here.
+  ls.mu.Lock();
+  defer ls.mu.Unlock();
+  var locked, _ = ls.locks[args.Lockname];
 
+  if locked {
+    reply.OK = true;
+    ls.locks[args.Lockname] = false
+  } else {
+    reply.OK = false;
+  }
+
+  ls.createLogEntry(args.Id, reply.OK)
+  ls.updateBackup(args, reply, ls.locks[args.Lockname])
+  return nil
+}
+
+func (ls *LockServer) BecomePrimary(args *LockArgs, reply *LockReply)  error {
+  ls.am_primary = true
+  ls.did_switch = true
+  reply.OK = true
+  return nil
+}
+
+func (ls *LockServer) GetLog(args *LockArgs, reply *LockReply) error {
+  id := args.Id
+  logValue, exists := ls.log[id]
+  //fmt.Printf("Log value %v exists\n", exists)
+  if !exists {
+    //fmt.Printf("Checked for log %v, didn't exist\n", id)
+    logValue = false
+  }
+
+  reply.OK = logValue
+  reply.LogEntry = exists
   return nil
 }
 
@@ -85,14 +156,18 @@ func (dc DeafConn) Read(p []byte) (n int, err error) {
   return dc.c.Read(p)
 }
 
-func StartServer(primary string, backup string, am_primary bool) *LockServer {
+func initLockServer(primary string, backup string, am_primary bool) *LockServer {
   ls := new(LockServer)
   ls.backup = backup
   ls.am_primary = am_primary
   ls.locks = map[string]bool{}
+  ls.log = map[int]bool{}
+  ls.did_switch = false
+  return ls;
+}
 
-  // Your initialization code here.
-
+func StartServer(primary string, backup string, am_primary bool) *LockServer {
+  ls := initLockServer(primary, backup, am_primary);
 
   me := ""
   if am_primary {

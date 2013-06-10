@@ -3,6 +3,10 @@ package kvpaxos
 const (
   OK = "OK"
   ErrNoKey = "ErrNoKey"
+  ErrWrongServer = "ErrWrongServer"
+  ErrWrongView = "ErrWrongView"
+  ErrWrongState = "ErrWrongState"
+  ErrUnknown = "ErrUnknown"
 )
 type Err string
 

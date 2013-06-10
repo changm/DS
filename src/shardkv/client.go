@@ -13,7 +13,6 @@ type Clerk struct {
   // You'll have to modify Clerk.
 }
 
-
 func MakeClerk(shardmasters []string) *Clerk {
   ck := new(Clerk)
   ck.sm = shardmaster.MakeClerk(shardmasters)

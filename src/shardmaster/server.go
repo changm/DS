@@ -22,7 +22,6 @@ type ShardMaster struct {
   configs []Config // indexed by config num
 }
 
-
 type Op struct {
   // Your data here.
 }
@@ -48,7 +47,6 @@ func (sm *ShardMaster) Move(args *MoveArgs, reply *MoveReply) error {
 
 func (sm *ShardMaster) Query(args *QueryArgs, reply *QueryReply) error {
   // Your code here.
-
   return nil
 }
 
