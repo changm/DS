@@ -2,17 +2,14 @@ package pbservice
 
 import "viewservice"
 import "net/rpc"
-import "fmt"
-// You'll probably need to uncomment this:
-// import "time"
-
+//import "fmt"
+import "time"
 
 type Clerk struct {
   vs *viewservice.Clerk
 }
 
 func MakeClerk(vshost string, me string) *Clerk {
-  fmt.Printf("ME is: %v\n", me)
   ck := new(Clerk)
   ck.vs = viewservice.MakeClerk(me, vshost)
   return ck
@@ -61,15 +58,20 @@ func (ck *Clerk) Get(key string) string {
   args := &GetArgs{}
   args.Key = key
   var reply GetReply
-  primary := ck.vs.Primary()
-  fmt.Printf("Calling GET\n")
+  var primary = ck.vs.Primary()
+  //fmt.Printf("Calling GET on primary %v\n", primary)
 
-  ok := call(primary, "PBServer.Get", args, &reply)
-  if ok == false {
-    fmt.Printf("Error calling Get\n")
+  for {
+    ok := call(primary, "PBServer.Get", args, &reply)
+    if ok == true && reply.Err == OK {
+      break
+    } else {
+      //fmt.Printf("Error calling GET, trying again\n")
+      time.Sleep(viewservice.PingInterval)
+      primary = ck.vs.Primary()
+      //fmt.Printf("Error calling GET, trying again to %v, backup %v\n", ck.vs.Primary(), ck.vs.Backup())
+    }
   }
-  fmt.Printf("Get value is: %v\n", reply.Value)
-
   return reply.Value
 }
 
@@ -82,10 +84,16 @@ func (ck *Clerk) Put(key string, value string) {
   args.Key = key
   args.Value = value
   var reply PutReply
-  primary := ck.vs.Primary()
+  var primary = ck.vs.Primary()
 
-  ok := call(primary, "PBServer.Put", args, &reply)
-  if ok == false {
-    fmt.Printf("Error calling put\n")
-  }
+  for {
+    ok := call(primary, "PBServer.Put", args, &reply)
+    if ok == true && reply.Err == OK {
+      break
+    } else {
+      time.Sleep(viewservice.PingInterval)
+      primary = ck.vs.Primary()
+      //fmt.Printf("Error Calling put, trying again\n")
+    }
+  } // end for
 }

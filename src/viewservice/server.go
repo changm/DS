@@ -187,7 +187,6 @@ func (vs* ViewServer) init(nameString string) {
 }
 
 func StartServer(me string) *ViewServer {
-  fmt.Printf("STarting viewserver %v\n", me)
   vs := new(ViewServer)
   vs.init(me);
 

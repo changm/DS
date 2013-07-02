@@ -83,3 +83,12 @@ func (ck *Clerk) Primary() string {
   }
   return ""
 }
+
+func (ck* Clerk) Backup() string {
+  v, ok := ck.Get()
+  if ok {
+    return v.Backup
+  }
+
+  return ""
+}

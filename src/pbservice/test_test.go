@@ -6,7 +6,7 @@ import "testing"
 import "time"
 import "log"
 import "runtime"
-//import "math/rand"
+import "math/rand"
 import "os"
 import "strconv"
 
@@ -63,10 +63,8 @@ func TestBasicFail(t *testing.T) {
 
   fmt.Printf("  ... Passed\n")
 
-/*
   // add a backup
 
-  fmt.Printf("Test: Add a backup ...\n")
 
   s2 := StartServer(vshost, port(tag, 2))
   for i := 0; i < viewservice.DeadPings * 2; i++ {
@@ -141,10 +139,7 @@ func TestBasicFail(t *testing.T) {
   time.Sleep(time.Second)
   vs.Kill()
   time.Sleep(time.Second)
-  */
 }
-
-/*
 
 // Put right after a backup dies.
 func TestFailPut(t *testing.T) {
@@ -369,6 +364,7 @@ func TestConcurrentSameUnreliable(t *testing.T) {
   for xi := 0; xi < nclients; xi++ {
     go func(i int) {
       ck := MakeClerk(vshost, "")
+      MakeClerk(vshost, "")
       rr := rand.New(rand.NewSource(int64(os.Getpid()+i)))
       for done == false {
         k := strconv.Itoa(rr.Int() % nkeys)
@@ -420,6 +416,7 @@ func TestConcurrentSameUnreliable(t *testing.T) {
   }
 
   fmt.Printf("  ... Passed\n")
+  vs.Kill()
 
   for i := 0; i < nservers; i++ {
     sa[i].kill()
@@ -615,7 +612,7 @@ func TestRepeatedCrashUnreliable(t *testing.T) {
   time.Sleep(time.Second)
 }
 
-func retiredTestPartition1(t *testing.T) {
+func TestRetiredTestPartition1(t *testing.T) {
   runtime.GOMAXPROCS(4)
 
   tag := "part1"
@@ -697,7 +694,7 @@ func retiredTestPartition1(t *testing.T) {
   vs.Kill()
 }
 
-func retiredTestPartition2(t *testing.T) {
+func TestRetiredTestPartition2(t *testing.T) {
   runtime.GOMAXPROCS(4)
 
   tag := "part2"
@@ -786,5 +783,3 @@ func retiredTestPartition2(t *testing.T) {
   s3.kill()
   vs.Kill()
 }
-
-*/

@@ -4,6 +4,7 @@ const (
   OK = "OK"
   ErrNoKey = "ErrNoKey"
   ErrWrongServer = "ErrWrongServer"
+  ErrBackupFail = "Err No Backup Update"
 )
 type Err string
 
@@ -25,5 +26,7 @@ type GetReply struct {
   Value string
 }
 
+type ImageArgs struct {
+}
 
 // Your RPC definitions here.
