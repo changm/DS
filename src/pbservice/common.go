@@ -5,6 +5,7 @@ const (
   ErrNoKey = "ErrNoKey"
   ErrWrongServer = "ErrWrongServer"
   ErrBackupFail = "Err No Backup Update"
+  ErrDiffValue = "Error. Backup and Primary have different values"
 )
 type Err string
 

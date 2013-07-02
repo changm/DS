@@ -38,19 +38,20 @@ func (pb *PBServer) BackupGet(args *GetArgs, reply *GetReply) error {
   if pb.isBackup {
     key := args.Key
     value, valid := pb.values[key]
+
     if valid {
       reply.Value = value
       reply.Err = OK
-    } else {
-      reply.Value = ""
-      reply.Err = ErrNoKey
+      return nil
     }
+
+    reply.Err = ErrNoKey
   } else {
     reply.Err = ErrWrongServer
-    // TODO: find syntax for error creation
   }
 
-  return nil
+  errorString := "Error: Called BackupGet with error: " + string(reply.Err)
+  return errors.New(errorString)
 }
 
 func (pb *PBServer) BackupKeyUpdate(args *PutArgs, reply *PutReply) error {
@@ -60,7 +61,7 @@ func (pb *PBServer) BackupKeyUpdate(args *PutArgs, reply *PutReply) error {
     reply.Err = OK
   } else {
     reply.Err = ErrWrongServer
-    // TODO: find syntax for error creation
+    return errors.New("Error: Calling Backup key update on non backup server\n")
   }
 
   return nil
@@ -74,69 +75,28 @@ func (pb *PBServer) hasBackup() bool {
   return false
 }
 
-func (pb *PBServer) updateBackup(args *PutArgs) bool {
+func (pb *PBServer) updateBackupPut(args *PutArgs) bool {
   var reply PutReply
-    if pb.hasBackup() {
-      backupConnection, error := rpc.Dial("unix", pb.totalView.Backup)
-      if error != nil {
-        fmt.Printf("Error from primary establishing connection to backup %v\n", error)
-        return false
-      }
-
-      defer backupConnection.Close() // Only can close if actually opened
-      result := backupConnection.Call("PBServer.BackupKeyUpdate", args, &reply)
-
-      if result != nil && reply.Err != OK {
-        fmt.Printf("Error updating backup Key\n")
-        return false
-      }
-
-      return true
-    } else {
-      //fmt.Printf("Backup server is uninitialized. Total view is: %v\n", pb.totalView)
-      if len(pb.totalView.Backup) != 0 {
-        os.Exit(1)
-      }
-
-      return true
+  if pb.hasBackup() {
+    return call(pb.totalView.Backup, "PBServer.BackupKeyUpdate", args, &reply)
   }
 
-  return false
+  return true
 }
 
 func (pb *PBServer) updateBackupGet(args *GetArgs, value string) bool {
   var reply GetReply
   if pb.hasBackup() {
-    backupConnection, error := rpc.Dial("unix", pb.totalView.Backup)
-    if error != nil {
-      fmt.Printf("Error from primary backup GET establishing connection to backup %v\n", error)
-      return false
-    }
-    defer backupConnection.Close()
-    result := backupConnection.Call("PBServer.BackupGet", args, &reply)
-
-    if result != nil && reply.Err != OK {
-      fmt.Printf("Error updating backup Key\n")
-      return false
-    }
-
+    success := call(pb.totalView.Backup, "PBServer.BackupGet", args, &reply)
     if reply.Value != value {
-      fmt.Printf("Error: Backup and Primary diverge on GET value\n")
-      os.Exit(1)
+      reply.Err = ErrDiffValue
       return false
     }
 
-    return true
-  } else {
-    //fmt.Printf("Backup server is uninitialized. Total view is: %v\n", pb.totalView)
-    if len(pb.totalView.Backup) != 0 {
-      os.Exit(1)
-    }
-
-    return true
+    return success
   }
 
-  return false
+  return true
 }
 
 func (pb *PBServer) Get(args *GetArgs, reply *GetReply) error {
@@ -146,35 +106,28 @@ func (pb *PBServer) Get(args *GetArgs, reply *GetReply) error {
   key := args.Key
   if pb.isPrimary {
     value, validKey := pb.values[key]
+
     if validKey {
       if pb.updateBackupGet(args, value) {
         reply.Value = value
         reply.Err = OK
-      } else {
-        fmt.Printf("Error in GET. Backup has different GET value or failed to get backup get\n")
-        reply.Value = ""
-        reply.Err = ErrBackupFail
+        return nil
       }
-    } else {
-      fmt.Printf("Error invalid key %v\n", key)
-      fmt.Printf("All values: %v\n", pb.values)
-      os.Exit(1)
-      reply.Value = ""
-      reply.Err = ErrNoKey
     }
+
+    reply.Err = ErrNoKey
   } else {
     fmt.Printf("Error wrong server on GET\n")
-    // Ugly hack to pass test cases - 
-    // TODO: Wrong servers should not return anything
-    // and instead silently fail - actually bad test design
-    // more than bad server design
-    time.Sleep(3 * time.Second)
-    reply.Value = ""
+    // Have to sleep for 2 seconds because the test case requires
+    // use to drop connections rather than return error
+    // bad test case design
+    time.Sleep(2 * time.Second)
     reply.Err = ErrWrongServer
-    return errors.New("Get called on non Primary\n")
   }
 
-  return nil
+  reply.Value = ""
+  errorString := "Error Calling Get: " + string(reply.Err)
+  return errors.New(errorString)
 }
 
 func (pb *PBServer) Put(args *PutArgs, reply *PutReply) error {
@@ -183,19 +136,18 @@ func (pb *PBServer) Put(args *PutArgs, reply *PutReply) error {
 
   key, value := args.Key, args.Value
   if pb.isPrimary {
-    if pb.updateBackup(args) {
+    if pb.updateBackupPut(args) {
       pb.values[key] = value
       reply.Err = OK
-    } else {
-      reply.Err = ErrBackupFail
-      return errors.New("Could not update backup\n")
+      return nil
     }
+
+    reply.Err = ErrBackupFail
   } else {
     reply.Err = ErrWrongServer
-    return errors.New("Put called on non-primary server\n")
   }
 
-  return nil
+  return errors.New("Error putting: " + string(reply.Err))
 }
 
 func (pb *PBServer) KeyClone(data *map[string]string, _ *struct{}) error {
@@ -208,25 +160,11 @@ func (pb *PBServer) KeyClone(data *map[string]string, _ *struct{}) error {
 
 func (pb *PBServer) sendPrimaryImage(primary string, backup string) {
   for {
-    connection, error := rpc.Dial("unix", backup)
-    if error != nil {
-      fmt.Printf("Error: Primary could not make connection to bacup : %v\n", backup)
-    }
-
-    defer connection.Close()
-    data := make(map[string] string)
-    for key, val := range pb.values {
-      data[key] = val
-    }
-
-    timeout := connection.Call("PBServer.KeyClone", &data, &struct{}{});
-
-    if timeout != nil {
-      fmt.Printf("Primary could not send image to backup\n")
-      time.Sleep(viewservice.PingInterval)
-    } else {
+    if call(backup, "PBServer.KeyClone", &pb.values, &struct{}{}) {
       return
     }
+
+    time.Sleep(viewservice.PingInterval)
   }
 }
 

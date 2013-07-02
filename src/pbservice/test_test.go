@@ -35,10 +35,8 @@ func TestBasicFail(t *testing.T) {
   vshost := port(tag+"v", 1)
   vs := viewservice.StartServer(vshost)
   time.Sleep(time.Second)
-  fmt.Printf("VS is: %v\n", vs)
 
   vck := viewservice.MakeClerk("", vshost)
-  fmt.Printf("Clerk is: %v\n", vck)
 
   ck := MakeClerk(vshost, "")
 
