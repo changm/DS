@@ -28,7 +28,17 @@ import "syscall"
 import "sync"
 import "fmt"
 import "math/rand"
+import "math"
 
+type ProposeReply struct {
+  ProposedNumber  int
+  Accepted        bool
+}
+
+type AcceptArg struct {
+  ProposalNumber  int
+  Value           interface{}
+}
 
 type Paxos struct {
   mu sync.Mutex
@@ -38,8 +48,11 @@ type Paxos struct {
   peers []string
   me int // index into peers[]
 
-
-  // Your data here.
+  // Shoudl we split accepted / proposed?
+  acceptedSequence  int
+  // Interesting that interface{} is essentially void
+  value             interface{}
+  highestProposal   int
 }
 
 //
@@ -72,6 +85,93 @@ func call(srv string, name string, args interface{}, reply interface{}) bool {
   return false
 }
 
+// Begin Paxos Proposal
+func (px *Paxos) isMajority(count int) bool {
+  majority := math.Ceil( float64(len(px.peers)) / 2.0 )
+  floatCount := float64(count)
+  return floatCount >= majority
+}
+
+func (px *Paxos) Propose() {
+  newProposal := px.highestProposal + 1
+  px.SendPrepare(newProposal)
+}
+
+func (px *Paxos) Accept(args *AcceptArg, reply *ProposeReply) error {
+  if args.ProposalNumber >= px.highestProposal {
+    px.value = args.Value
+    px.acceptedSequence = args.ProposalNumber
+  } else {
+    fmt.Printf("Unknown proposal number in Accept")
+  }
+  return nil
+}
+
+// returns true if accepted by majority
+func (px *Paxos) SendPrepare(proposalNumber int) bool {
+  var count = 0
+  for _, peer := range px.peers {
+    var reply ProposeReply
+    success := call(peer, "Paxos.AcceptPrepare", proposalNumber, &reply)
+    if success {
+      if reply.Accepted {
+        count++
+      } else {
+      }
+    } else {
+      fmt.Printf("Error calling Accept Prepare\n")
+      os.Exit(1)
+    }
+  }
+
+  fmt.Printf("Got count: %v\n", count)
+  // Send accepts
+  if px.isMajority(count) {
+    acceptArg := AcceptArg{}
+    acceptArg.ProposalNumber = proposalNumber
+    acceptArg.Value = px.value
+    var reply ProposeReply
+
+    for _, peer := range px.peers {
+      success := call(peer, "Paxos.Accept", acceptArg, &reply)
+      if success {
+        fmt.Printf("Accept success\n")
+      } else {
+        fmt.Printf("Accept failure\n");
+      }
+    }
+  } else {
+    fmt.Printf("Was not majority, exiting\n")
+    os.Exit(1)
+  }
+
+  return true
+}
+
+// Returns true if it accepts this proposal
+// If it does, returns highest prepare number
+func (px *Paxos) AcceptPrepare(proposalNumber int, reply *ProposeReply) error {
+  fmt.Printf("Proposal number is: %v. Highest proposal %v\n", proposalNumber, px.highestProposal)
+  if proposalNumber > px.highestProposal {
+    px.highestProposal = proposalNumber
+    reply.ProposedNumber = proposalNumber
+    reply.Accepted = true
+  } else {
+    reply.ProposedNumber = px.highestProposal
+    reply.Accepted = false
+  }
+
+  fmt.Printf("Returning from accept reparep\n")
+  return nil
+}
+
+// end Paxos proposal
+
+func (px *Paxos) init() {
+  px.acceptedSequence = -1
+  px.highestProposal = -1
+  px.value = nil
+}
 
 //
 // the application wants paxos to start agreement on
@@ -81,7 +181,12 @@ func call(srv string, name string, args interface{}, reply interface{}) bool {
 // is reached.
 //
 func (px *Paxos) Start(seq int, v interface{}) {
-  // Your code here.
+  // We just accept the first sequence and value we're given
+  fmt.Printf("Sequence %v, Value is: %v\n", seq, v)
+ // px.acceptedSequence = seq
+  px.value = v
+  px.highestProposal = seq - 1
+  go px.Propose()
 }
 
 //
@@ -92,6 +197,7 @@ func (px *Paxos) Start(seq int, v interface{}) {
 //
 func (px *Paxos) Done(seq int) {
   // Your code here.
+  fmt.Printf("Calling done\n")
 }
 
 //
@@ -100,8 +206,7 @@ func (px *Paxos) Done(seq int) {
 // this peer.
 //
 func (px *Paxos) Max() int {
-  // Your code here.
-  return 0
+  return px.highestProposal
 }
 
 //
@@ -148,7 +253,12 @@ func (px *Paxos) Min() int {
 // it should not contact other Paxos peers.
 //
 func (px *Paxos) Status(seq int) (bool, interface{}) {
-  // Your code here.
+  // Only accepted if sequence number is the accepted value
+  fmt.Printf("Sequence asking: %v, accepted: %v\n", seq, px.acceptedSequence)
+  if (seq == px.acceptedSequence) {
+    return true, px.value
+  }
+
   return false, nil
 }
 
@@ -174,7 +284,7 @@ func Make(peers []string, me int, rpcs *rpc.Server) *Paxos {
   px := &Paxos{}
   px.peers = peers
   px.me = me
-
+  px.init()
 
   // Your initialization code here.
 
