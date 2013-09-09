@@ -21,6 +21,7 @@ package paxos
 //
 
 import "net"
+import "time"
 import "net/rpc"
 import "log"
 import "os"
@@ -28,6 +29,7 @@ import "syscall"
 import "sync"
 import "fmt"
 import "math/rand"
+import "container/list"
 //import "math"
 
 type ProposeArg struct {
@@ -41,6 +43,7 @@ type ProposeReply struct {
 }
 
 type AcceptArg struct {
+  Sequence        int
   ProposalNumber  int
   Value           interface{}
 }
@@ -48,6 +51,23 @@ type AcceptArg struct {
 type AcceptReply struct {
   ProposalNumber  int
   Accepted        bool
+}
+
+type ConsensusArg struct {
+  Sequence        int
+  Value           interface{}
+}
+
+type ConsensusReply struct {
+  Accepted        bool
+}
+
+type LeaderArg struct {
+  NewLeader   string
+}
+
+type LeaderReply struct {
+  Accepted    bool
 }
 
 type Paxos struct {
@@ -59,13 +79,13 @@ type Paxos struct {
   me int // index into peers[]
 
   // Custom data here
-  acceptedProposal  int
-  promisedProposal  int
-
-  acceptedValue     interface{}
-  promisedValue     interface{}
+  proposal    int
+  value       interface{}
+  maxSequence int
 
   log map[int] interface{}
+  leader  string
+  work    *list.List
 }
 
 //
@@ -112,70 +132,76 @@ func (px *Paxos) isMajority(accepted map[string] bool) bool {
 }
 
 func (px *Paxos) AcceptPrepare(args *ProposeArg, reply *ProposeReply) error {
-  if args.ProposalNumber > px.promisedProposal {
-    px.promisedProposal = args.ProposalNumber
-    px.promisedValue = args.Value
+  if args.ProposalNumber > px.proposal {
+    px.proposal = args.ProposalNumber
     reply.Accepted = true
+    fmt.Printf("Me %v Accepted Proposal %v because promised propsal is: %v\n", px.me, args.ProposalNumber, px.proposal)
   } else {
+    fmt.Printf("Me %v Rejected proposal %v because promised proposal is %v\n", px.me, args.ProposalNumber, px.proposal)
     reply.Accepted = false
   }
 
-  reply.ProposalNumber = px.promisedProposal
+  reply.ProposalNumber = px.proposal
   return nil
 }
 
-func (px *Paxos) Propose(seq int, value interface{} ) bool {
+func (px *Paxos) Propose(newProposal int, value interface{} ) bool {
   var accepted map[string] bool = make(map[string] bool)
-
   for _, peer := range px.peers {
     var reply ProposeReply
     var args ProposeArg
-    args.ProposalNumber = seq
+    args.ProposalNumber = newProposal
     args.Value = value
 
     call(peer, "Paxos.AcceptPrepare", &args, &reply)
     accepted[peer] = reply.Accepted
     if reply.Accepted {
-      fmt.Printf("Accepted prepare proposal %v\n", args.ProposalNumber)
+      fmt.Printf("Accepted proposal %v\n", newProposal)
     } else {
-      fmt.Printf("Rejected Prepare");
+      fmt.Printf("Rejected Proposal %v\n", newProposal)
     }
   }
 
-  return px.isMajority(accepted)
+  hasMajority := px.isMajority(accepted)
+  fmt.Printf("Proposal %v with value %v has majority %v\n", newProposal, value, hasMajority)
+  return hasMajority
 }
 
-func (px* Paxos) isAcceptedProposal(seq int, value interface{}) bool {
-  return px.promisedProposal == seq && px.promisedValue == value
+func (px* Paxos) isAcceptedProposal(proposal int, value interface{}) bool {
+  return px.proposal == proposal
 }
 
 func (px* Paxos) AcceptRequest(args *AcceptArg, reply *AcceptReply) error {
-  seq := args.ProposalNumber
+  proposal := args.ProposalNumber
+  fmt.Printf("Proposal number is: %v\n", proposal)
   value := args.Value
-  if px.isAcceptedProposal(seq, value) {
+  if px.isAcceptedProposal(proposal, value) {
     reply.Accepted = true
-    px.commitProposal(seq, value)
+    fmt.Printf("Commiting proposal %v to value %v\n", args.Sequence, value)
+    px.commitProposal(args.Sequence, value)
   } else {
+    fmt.Printf("Not accepting proposal %v, stored proposal number%v\n", proposal, px.proposal)
     reply.Accepted = false
   }
 
-  reply.ProposalNumber = seq
+  reply.ProposalNumber = proposal
   return nil
 }
 
 func (px* Paxos) commitProposal(seq int, value interface{}) {
-  px.acceptedProposal = seq
-  px.acceptedValue = value
   px.log[seq] = value
 }
 
-func (px *Paxos) Accept(seq int, value interface{} ) {
+func (px *Paxos) Accept(seq int, proposalNumber int, value interface{} ) {
   var accepted map[string] bool = make(map[string] bool)
   for _, peer := range px.peers {
     var reply AcceptReply
     var args AcceptArg
-    args.ProposalNumber = seq
+
+    args.ProposalNumber = px.proposal
     args.Value = value
+    args.Sequence = seq
+
     call(peer, "Paxos.AcceptRequest", &args, &reply)
     accepted[peer] = reply.Accepted
     if !reply.Accepted {
@@ -186,11 +212,83 @@ func (px *Paxos) Accept(seq int, value interface{} ) {
   px.commitProposal(seq, value)
 }
 
-func (px *Paxos) Consensus(seq int, value interface{}) {
-  acceptedPropose := px.Propose(seq, value)
-  if acceptedPropose {
-    px.Accept(seq, value)
+func (px *Paxos) AppendWork(args *ConsensusArg, reply *ConsensusReply) error {
+  // Probably ahve to grab a mutex for this
+  px.work.PushBack(args)
+  return nil
+}
+
+func (px *Paxos) doWork() {
+  for {
+    if px.work.Len() > 0 {
+      work := px.work.Front().Value.(*ConsensusArg)
+      px.work.Remove(px.work.Front())
+      var reply ConsensusReply
+      px.Consensus(work, &reply)
+    } else {
+      time.Sleep(time.Second)
+    }
   }
+}
+
+func (px *Paxos) Consensus(args *ConsensusArg, reply *ConsensusReply) error {
+  // TODO: Replace sequence number with proposal number
+  seq := args.Sequence
+  value := args.Value
+  proposalNumber := px.proposal + 1
+  fmt.Printf("Me %v starting Sequence %v with value %v\n", px.me, seq, value)
+  acceptedPropose := px.Propose(proposalNumber, value)
+  if acceptedPropose {
+    px.Accept(seq, proposalNumber, value)
+  }
+
+  return nil
+}
+
+func (px *Paxos) NewLeader(arg *LeaderArg, reply *LeaderReply) error {
+  px.leader = arg.NewLeader
+  reply.Accepted = true
+  fmt.Printf("Me %v made leader %v\n", px.me, px.leader)
+  if px.peers[px.me] == px.leader {
+    go px.doWork()
+  }
+  return nil
+}
+
+func (px *Paxos) broadcastLeader(newLeader string) {
+  for _, peer := range px.peers {
+    var arg LeaderArg
+    var reply LeaderReply
+    arg.NewLeader = newLeader
+
+    success := call(peer, "Paxos.NewLeader", &arg, &reply)
+    if success && reply.Accepted {
+      fmt.Printf("Peer %v Made leader %v\n", peer, newLeader)
+    }
+  }
+
+  px.leader = newLeader
+  fmt.Printf("FInished broadcasting leader\n")
+}
+
+func (px* Paxos) Ping(args *int, reply *int) error {
+  return nil
+}
+
+func (px *Paxos) electLeader() bool {
+  for _, peer := range px.peers {
+    var args = 0
+    var reply = 0
+
+    alive := call(peer, "Paxos.Ping", &args, &reply)
+    fmt.Printf("Peer %v alive, making leader\n", peer)
+    if alive {
+      px.broadcastLeader(peer)
+      return true
+    }
+  }
+
+  return false
 }
 
 // end Paxos proposal
@@ -200,11 +298,15 @@ func (px *Paxos) reset() {
 }
 
 func (px *Paxos) init() {
-  px.acceptedProposal = -1
-  px.promisedProposal = -1
-  px.acceptedValue = nil
-  px.promisedValue = nil
+  px.proposal = 0
+  px.value = nil
   px.log = make(map[int] interface{})
+  px.maxSequence = -1
+  if px.me == 0 {
+    px.electLeader()
+  }
+
+  px.work = list.New()
 }
 
 //
@@ -215,8 +317,25 @@ func (px *Paxos) init() {
 // is reached.
 //
 func (px *Paxos) Start(seq int, v interface{}) {
-  fmt.Printf("Starting %v, Value is: %v\n", seq, v)
-  go px.Consensus(seq, v)
+  fmt.Printf("Me %v Starting %v, Value is: %v\n", px.me, seq, v)
+  var args ConsensusArg;
+  var reply ConsensusReply;
+  args.Sequence = seq
+  args.Value = v
+
+  if seq > px.maxSequence {
+    px.maxSequence = seq
+  }
+
+  var success = call(px.leader, "Paxos.AppendWork", &args, &reply)
+  for !success {
+    px.electLeader()
+    fmt.Printf("Made new leader, trying to append work\n")
+    success = call(px.leader, "Paxos.AppendWork", &args, &reply)
+    fmt.Printf("Trying again with new leader\n")
+  }
+
+  fmt.Printf("Returning from start\n")
 }
 
 //
@@ -240,7 +359,7 @@ func (px *Paxos) Done(seq int) {
 // this peer.
 //
 func (px *Paxos) Max() int {
-  return px.promisedProposal
+  return px.maxSequence
 }
 
 //
@@ -317,8 +436,6 @@ func Make(peers []string, me int, rpcs *rpc.Server) *Paxos {
   px.peers = peers
   px.me = me
   px.init()
-
-  // Your initialization code here.
 
   if rpcs != nil {
     // caller will create socket &c
