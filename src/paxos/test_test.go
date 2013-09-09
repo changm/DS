@@ -188,7 +188,6 @@ func TestDeaf(t *testing.T) {
 
   pxa[1].Start(1, "goodbye")
   waitmajority(t, pxa, 1)
-  /*
   time.Sleep(1 * time.Second)
   if ndecided(t, pxa, 1) != npaxos - 2 {
     t.Fatalf("a deaf peer heard about a decision")
@@ -205,7 +204,6 @@ func TestDeaf(t *testing.T) {
   waitn(t, pxa, 1, npaxos)
 
   fmt.Printf("  ... Passed\n")
-  */
 }
 
 /*

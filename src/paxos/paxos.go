@@ -153,12 +153,14 @@ func (px *Paxos) Propose(newProposal int, value interface{} ) bool {
     args.ProposalNumber = newProposal
     args.Value = value
 
-    call(peer, "Paxos.AcceptPrepare", &args, &reply)
+    fmt.Printf("Calling propose new proposal %v on peer %v\n", newProposal, peer)
+    success := call(peer, "Paxos.AcceptPrepare", &args, &reply)
     accepted[peer] = reply.Accepted
-    if reply.Accepted {
+    fmt.Printf("Peer %v Success is: %v,, reply %v\n", peer, success, reply.Accepted)
+    if reply.Accepted && success {
       fmt.Printf("Accepted proposal %v\n", newProposal)
     } else {
-      fmt.Printf("Rejected Proposal %v\n", newProposal)
+      fmt.Printf("Me %v Rejected Proposal %v\n", px.me, newProposal)
     }
   }
 
@@ -189,6 +191,7 @@ func (px* Paxos) AcceptRequest(args *AcceptArg, reply *AcceptReply) error {
 }
 
 func (px* Paxos) commitProposal(seq int, value interface{}) {
+  fmt.Printf("Me %v commiting sequence %v to value %v\n", px.me, seq, value)
   px.log[seq] = value
 }
 
@@ -202,10 +205,10 @@ func (px *Paxos) Accept(seq int, proposalNumber int, value interface{} ) {
     args.Value = value
     args.Sequence = seq
 
-    call(peer, "Paxos.AcceptRequest", &args, &reply)
+    success := call(peer, "Paxos.AcceptRequest", &args, &reply)
     accepted[peer] = reply.Accepted
-    if !reply.Accepted {
-      fmt.Printf("Error accepting\n")
+    if !reply.Accepted || !success {
+      fmt.Printf("Me %v Peer %v had an error accepting\n", px.me, peer)
     }
   }
 
@@ -264,6 +267,8 @@ func (px *Paxos) broadcastLeader(newLeader string) {
     success := call(peer, "Paxos.NewLeader", &arg, &reply)
     if success && reply.Accepted {
       fmt.Printf("Peer %v Made leader %v\n", peer, newLeader)
+    } else {
+      fmt.Printf("Error, peer %v did not get leader notification. success is %v, reply is %v\n", peer, success, reply.Accepted)
     }
   }
 
@@ -272,16 +277,90 @@ func (px *Paxos) broadcastLeader(newLeader string) {
 }
 
 func (px* Paxos) Ping(args *int, reply *int) error {
+  fmt.Printf("Getting a ping %v\n", px.me)
   return nil
 }
 
+func (px *Paxos) initListener() {
+    rpcs := rpc.NewServer()
+    rpcs.Register(px)
+
+    // prepare to receive connections from clients.
+    // change "unix" to "tcp" to use over a network.
+    os.Remove(px.peers[px.me]) // only needed for "unix"
+    l, e := net.Listen("unix", px.peers[px.me]);
+    if e != nil {
+      log.Fatal("listen error: ", e);
+    }
+    px.l = l
+
+    // We died because we removed the the RPC 
+    // Reinitialize it, couldn't find a cleaner way to do this
+    // create a thread to accept RPC connections
+    go func() {
+      for px.dead == false {
+        conn, err := px.l.Accept()
+        if err == nil && px.dead == false {
+          if px.unreliable && (rand.Int63() % 1000) < 100 {
+            // discard the request.
+            conn.Close()
+          } else if px.unreliable && (rand.Int63() % 1000) < 200 {
+            // process the request but force discard of reply.
+            c1 := conn.(*net.UnixConn)
+            f, _ := c1.File()
+            err := syscall.Shutdown(int(f.Fd()), syscall.SHUT_WR)
+            if err != nil {
+              fmt.Printf("shutdown: %v\n", err)
+            }
+            go rpcs.ServeConn(conn)
+          } else {
+            go rpcs.ServeConn(conn)
+          }
+        } else if err == nil {
+          conn.Close()
+        }
+        if err != nil && px.dead == false {
+          fmt.Printf("Paxos(%v) accept: %v\n", px.me, err.Error())
+          px.Kill()
+        }
+      }
+    }()
+}
+
+func (px *Paxos) GetLeader(args *int, reply *string) error {
+  *reply = px.leader
+  return nil
+}
+
+func (px *Paxos) askNeighborForLeader() bool {
+  for _, peer := range px.peers {
+    if peer == px.peers[px.me] {
+      continue
+    }
+
+    var args = 0
+    var newLeader string
+    success := call (peer, "Paxos.GetLeader", &args, &newLeader)
+    if success && newLeader != "" && newLeader != px.leader {
+      fmt.Printf("Me %v Got leader from peer %v, is %v\n", px.me, peer, newLeader)
+      px.leader = newLeader
+      return true
+    }
+  }
+
+  return false
+}
+
 func (px *Paxos) electLeader() bool {
+  if px.askNeighborForLeader() {
+    return true
+  }
+
   for _, peer := range px.peers {
     var args = 0
     var reply = 0
 
     alive := call(peer, "Paxos.Ping", &args, &reply)
-    fmt.Printf("Peer %v alive, making leader\n", peer)
     if alive {
       px.broadcastLeader(peer)
       return true
@@ -309,6 +388,18 @@ func (px *Paxos) init() {
   px.work = list.New()
 }
 
+func (px *Paxos) ensureAlive() {
+  var args = 0
+  var reply = 0
+
+  alive := call(px.peers[px.me], "Paxos.Ping", &args, &reply)
+  if !alive {
+    px.initListener()
+    px.askNeighborForLeader()
+    fmt.Printf("I brought %v up again, leader is %v\n", px.me, px.leader)
+  }
+}
+
 //
 // the application wants paxos to start agreement on
 // instance seq, with proposed value v.
@@ -327,6 +418,8 @@ func (px *Paxos) Start(seq int, v interface{}) {
     px.maxSequence = seq
   }
 
+  // If we died, make sure we're up again
+  px.ensureAlive()
   var success = call(px.leader, "Paxos.AppendWork", &args, &reply)
   for !success {
     px.electLeader()
