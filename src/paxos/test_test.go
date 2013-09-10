@@ -208,6 +208,7 @@ func TestDeaf(t *testing.T) {
 }
 */
 
+/*
 func TestForget(t *testing.T) {
   runtime.GOMAXPROCS(4)
 
@@ -290,8 +291,8 @@ func TestForget(t *testing.T) {
 
   fmt.Printf("  ... Passed\n")
 }
+*/
 
-/*
 func TestManyForget(t *testing.T) {
   runtime.GOMAXPROCS(4)
 
@@ -351,6 +352,7 @@ func TestManyForget(t *testing.T) {
   fmt.Printf("  ... Passed\n")
 }
 
+/*
 //
 // does paxos forgetting actually free the memory?
 //
