@@ -163,6 +163,7 @@ func TestBasic(t *testing.T) {
 }
 */
 
+/*
 func TestDeaf(t *testing.T) {
   runtime.GOMAXPROCS(4)
 
@@ -205,8 +206,8 @@ func TestDeaf(t *testing.T) {
 
   fmt.Printf("  ... Passed\n")
 }
+*/
 
-/*
 func TestForget(t *testing.T) {
   runtime.GOMAXPROCS(4)
 
@@ -231,6 +232,7 @@ func TestForget(t *testing.T) {
       t.Fatalf("wrong initial Min() %v", m)
     }
   }
+  
 
   pxa[0].Start(0, "00")
   pxa[1].Start(1, "11")
@@ -289,6 +291,7 @@ func TestForget(t *testing.T) {
   fmt.Printf("  ... Passed\n")
 }
 
+/*
 func TestManyForget(t *testing.T) {
   runtime.GOMAXPROCS(4)
 

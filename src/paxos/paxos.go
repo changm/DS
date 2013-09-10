@@ -82,6 +82,7 @@ type Paxos struct {
   proposal    int
   value       interface{}
   maxSequence int
+  minSequence int
 
   log map[int] interface{}
   leader  string
@@ -129,6 +130,10 @@ func (px *Paxos) isMajority(accepted map[string] bool) bool {
   }
 
   return (count / numOfPeers) > 0.5
+}
+
+func (px *Paxos) isLeader() bool {
+  return px.peers[px.me] == px.leader
 }
 
 func (px *Paxos) AcceptPrepare(args *ProposeArg, reply *ProposeReply) error {
@@ -381,6 +386,7 @@ func (px *Paxos) init() {
   px.value = nil
   px.log = make(map[int] interface{})
   px.maxSequence = -1
+  px.minSequence = -1
   if px.me == 0 {
     px.electLeader()
   }
@@ -431,6 +437,49 @@ func (px *Paxos) Start(seq int, v interface{}) {
   fmt.Printf("Returning from start\n")
 }
 
+// For now, just tell the leader to fetch the minimum
+func (px *Paxos) UpdateMin(seq int) {
+
+}
+
+func (px *Paxos) GetMin(args *int, reply *int) error {
+  *reply = px.minSequence
+  return nil
+}
+
+func (px* Paxos) GetPaxosMin(args *int, reply *int) error {
+  var callArgs int
+  var callReply int
+  var totalMin = 100000
+  for _, peer := range px.peers {
+    call(peer, "Paxos.GetMin", &callArgs, &callReply)
+    if callReply < totalMin {
+      totalMin = callReply
+    }
+  }
+
+  *reply = totalMin
+  return nil
+}
+
+func (px* Paxos) RequestPaxosMin() int {
+  var reply int
+  var args int
+  success := call(px.leader, "Paxos.GetPaxosMin", &args, &reply)
+  if !success {
+    fmt.Printf("Error Calling Leader for Paxos Min. Leader is %v\n", px.leader)
+    return -1
+  }
+
+  fmt.Printf("Requested Paxos Min, got %v\n", reply)
+  return reply
+}
+
+// Ask all peers for their min
+func (px* Paxos) updateMin(seq int) {
+  px.minSequence = seq
+}
+
 //
 // the application on this machine is done with
 // all instances <= seq.
@@ -439,11 +488,12 @@ func (px *Paxos) Start(seq int, v interface{}) {
 //
 func (px *Paxos) Done(seq int) {
   // lookup for loop syntax
-/*
-  for index := range 0 seq {
-    delete(px.log[i])
+  for i:= 0; i <= seq; i++ {
+    delete(px.log, i)
   }
-  */
+
+  fmt.Printf("Called Done peer %v on sequence %v\n", px.me, seq)
+  px.updateMin(seq)
 }
 
 //
@@ -487,8 +537,9 @@ func (px *Paxos) Max() int {
 // instances.
 // 
 func (px *Paxos) Min() int {
-  // You code here.
-  return 0
+  val := px.RequestPaxosMin() + 1
+  fmt.Printf("Fetched min on %v - Return %v\n", px.me, val)
+  return val
 }
 
 //
