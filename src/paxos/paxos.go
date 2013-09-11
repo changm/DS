@@ -170,7 +170,7 @@ func (px *Paxos) Propose(newProposal int, value interface{} ) bool {
   }
 
   hasMajority := px.isMajority(accepted)
-  fmt.Printf("Proposal %v with value %v has majority %v\n", newProposal, value, hasMajority)
+  //fmt.Printf("Proposal %v with value %v has majority %v\n", newProposal, value, hasMajority)
   return hasMajority
 }
 
@@ -184,7 +184,7 @@ func (px* Paxos) AcceptRequest(args *AcceptArg, reply *AcceptReply) error {
   value := args.Value
   if px.isAcceptedProposal(proposal, value) {
     reply.Accepted = true
-    fmt.Printf("Commiting proposal %v to value %v\n", args.Sequence, value)
+    //fmt.Printf("Commiting proposal %v to value %v\n", args.Sequence, value)
     px.commitProposal(args.Sequence, value)
   } else {
     fmt.Printf("Not accepting proposal %v, stored proposal number%v\n", proposal, px.proposal)
@@ -196,7 +196,7 @@ func (px* Paxos) AcceptRequest(args *AcceptArg, reply *AcceptReply) error {
 }
 
 func (px* Paxos) commitProposal(seq int, value interface{}) {
-  fmt.Printf("Me %v commiting sequence %v to value %v\n", px.me, seq, value)
+  //fmt.Printf("Me %v commiting sequence %v to value %v\n", px.me, seq, value)
   px.log[seq] = value
 }
 
@@ -242,9 +242,14 @@ func (px *Paxos) doWork() {
 func (px *Paxos) Consensus(args *ConsensusArg, reply *ConsensusReply) error {
   // TODO: Replace sequence number with proposal number
   seq := args.Sequence
+  decided, _ := px.Status(seq)
+  if decided {
+    return nil
+  }
+
   value := args.Value
   proposalNumber := px.proposal + 1
-  fmt.Printf("Me %v starting Sequence %v with value %v\n", px.me, seq, value)
+  //fmt.Printf("Me %v starting Sequence %v with value %v\n", px.me, seq, value)
   acceptedPropose := px.Propose(proposalNumber, value)
   if acceptedPropose {
     px.Accept(seq, proposalNumber, value)
@@ -414,7 +419,7 @@ func (px *Paxos) ensureAlive() {
 // is reached.
 //
 func (px *Paxos) Start(seq int, v interface{}) {
-  fmt.Printf("Me %v Starting %v, Value is: %v\n", px.me, seq, v)
+  //fmt.Printf("Me %v Starting %v, Value is: %v\n", px.me, seq, v)
   var args ConsensusArg;
   var reply ConsensusReply;
   args.Sequence = seq

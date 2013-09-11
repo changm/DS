@@ -293,6 +293,7 @@ func TestForget(t *testing.T) {
 }
 */
 
+/*
 func TestManyForget(t *testing.T) {
   runtime.GOMAXPROCS(4)
 
@@ -351,11 +352,12 @@ func TestManyForget(t *testing.T) {
 
   fmt.Printf("  ... Passed\n")
 }
+*/
 
-/*
 //
 // does paxos forgetting actually free the memory?
 //
+/*
 func TestForgetMem(t *testing.T) {
   runtime.GOMAXPROCS(4)
 
@@ -419,6 +421,8 @@ func TestForgetMem(t *testing.T) {
 
   fmt.Printf("  ... Passed\n")
 }
+*/
+
 
 //
 // many agreements (without failures)
@@ -469,6 +473,7 @@ func TestMany(t *testing.T) {
   fmt.Printf("  ... Passed\n")
 }
 
+/*
 //
 // a peer starts up, with proposal, after others decide.
 // then another peer starts, without a proposal.
