@@ -180,7 +180,7 @@ func (px* Paxos) isAcceptedProposal(proposal int, value interface{}) bool {
 
 func (px* Paxos) AcceptRequest(args *AcceptArg, reply *AcceptReply) error {
   proposal := args.ProposalNumber
-  fmt.Printf("Proposal number is: %v\n", proposal)
+  fmt.Printf("Me %v Accept Request Proposal number is: %v\n", px.me, proposal)
   value := args.Value
   if px.isAcceptedProposal(proposal, value) {
     reply.Accepted = true
