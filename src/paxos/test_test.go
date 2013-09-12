@@ -123,7 +123,6 @@ func TestBasic(t *testing.T) {
 
   fmt.Printf("  ... Passed\n")
 
-/*
   fmt.Printf("Test: Many proposers, same value ...\n")
 
   for i := 0; i < npaxos; i++ {
@@ -160,7 +159,6 @@ func TestBasic(t *testing.T) {
   }
 
   fmt.Printf("  ... Passed\n")
-  */
 }
 
 /*

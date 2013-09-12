@@ -80,7 +80,8 @@ type Paxos struct {
   prepareNumber   int
   acceptedNumber  int
   acceptedValue   interface{}
-  value       interface{}
+  value           interface{}
+
   maxSequence int
   minSequence int
 
@@ -150,8 +151,13 @@ func (px* Paxos) AcceptRequest(args *AcceptArg, reply *AcceptReply) error {
 }
 
 func (px *Paxos) Decided(arg *DecidedArg, reply *bool) error {
-  px.log[arg.Sequence] = arg.Value
+  sequence := arg.Sequence
+  px.log[sequence] = arg.Value
   *reply = true
+
+  if sequence > px.maxSequence {
+    px.maxSequence = sequence
+  }
   return nil
 }
 
