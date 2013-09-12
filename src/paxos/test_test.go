@@ -101,7 +101,6 @@ func noTestSpeed(t *testing.T) {
   fmt.Printf("20 agreements %v seconds\n", d.Seconds())
 }
 
-/*
 func TestBasic(t *testing.T) {
   runtime.GOMAXPROCS(4)
 
@@ -124,6 +123,7 @@ func TestBasic(t *testing.T) {
 
   fmt.Printf("  ... Passed\n")
 
+/*
   fmt.Printf("Test: Many proposers, same value ...\n")
 
   for i := 0; i < npaxos; i++ {
@@ -160,8 +160,8 @@ func TestBasic(t *testing.T) {
   }
 
   fmt.Printf("  ... Passed\n")
+  */
 }
-*/
 
 /*
 func TestDeaf(t *testing.T) {
